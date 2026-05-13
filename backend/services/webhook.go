@@ -188,6 +188,9 @@ func SendWebhookForMessage(app core.App, webhook *core.Record, message *core.Rec
 }
 
 // SendTestWebhook sends a synthetic test payload to the webhook and returns the delivery result.
+// Intentionally does not consult webhookBreaker: the test endpoint is a manual
+// override so a user can probe a host whose production traffic has tripped the
+// breaker. Result still recorded in webhook_delivery_logs for visibility.
 func SendTestWebhook(app core.App, webhook *core.Record) *WebhookDeliveryResult {
 	payload := map[string]any{
 		"event":      "test",
@@ -403,15 +406,34 @@ func maskPhone(phone string) string {
 	return phone[:2] + strings.Repeat("*", len(phone)-6) + phone[len(phone)-4:]
 }
 
-var webhookBreaker = NewCircuitBreaker("webhook", 5, 60*time.Second)
+var webhookBreaker = NewHostCircuitBreaker("webhook", 5, 60*time.Second, 5*time.Minute)
+
+// webhookUnparseableHostBucket groups deliveries to URLs whose host cannot
+// be extracted, so the circuit-breaker still gates them rather than
+// silently bypassing protection.
+const webhookUnparseableHostBucket = "_unparseable_"
+
+// webhookHost returns the hostname (lowercased) used as the per-host
+// circuit-breaker key. Same logical destination expressed in different
+// case must map to one breaker, otherwise failures split across buckets
+// and the breaker trips slower than maxFails implies.
+//
+// Unparseable URLs or URLs without a host fall back to a shared sentinel
+// bucket so the breaker still applies — degraded gating, not bypass.
+func webhookHost(rawURL string) string {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return webhookUnparseableHostBucket
+	}
+	host := strings.ToLower(u.Hostname())
+	if host == "" {
+		return webhookUnparseableHostBucket
+	}
+	return host
+}
 
 // TriggerWebhooks finds active webhook configs for a user and fires matching webhooks.
 func TriggerWebhooks(app core.App, userId string, message *core.Record, event string) {
-	if !webhookBreaker.Allow() {
-		app.Logger().Warn("Webhook circuit breaker open, skipping webhooks",
-			slog.String("event", event), slog.String("user", userId))
-		return
-	}
 	webhooks, err := app.FindRecordsByFilter(
 		"webhook_configs",
 		"user = {:userId} && active = true",
@@ -426,12 +448,25 @@ func TriggerWebhooks(app core.App, userId string, message *core.Record, event st
 		events := wh.GetString("events")
 		if containsEvent(events, event) {
 			wh := wh // capture loop variable for closure
+			host := webhookHost(wh.GetString("url"))
+			// Allow runs synchronously here, but Record* happens inside a
+			// FireAndForget goroutine. Between the gate and the result, the
+			// breaker can race: a probe-true response transitions open→halfOpen,
+			// and if the goroutine stalls beyond cooldown, the half-open probe
+			// timeout (see Allow) re-arms and admits a second probe. Two probes
+			// in flight is rare and bounded; preferred over the prior failure
+			// mode of permanent half-open lock when a probe vanishes (panic).
+			if !webhookBreaker.Allow(host) {
+				app.Logger().Debug("webhook circuit breaker open, skipping delivery",
+					slog.String("event", event), slog.String("host", host))
+				continue
+			}
 			routine.FireAndForget(func() {
 				if err := SendWebhookForMessage(app, wh, message, event); err != nil {
-					webhookBreaker.RecordFailure()
+					webhookBreaker.RecordFailure(host)
 					app.Logger().Warn("webhook delivery failed", slog.Any("error", err))
 				} else {
-					webhookBreaker.RecordSuccess()
+					webhookBreaker.RecordSuccess(host)
 				}
 			})
 		}
@@ -479,11 +514,6 @@ func parseStoredPayload(raw any) (map[string]any, error) {
 
 // RetryFailedWebhooks retries failed webhook deliveries with exponential backoff.
 func RetryFailedWebhooks(app core.App) error {
-	if !webhookBreaker.Allow() {
-		app.Logger().Warn("Webhook circuit breaker open, skipping webhook retries")
-		return nil
-	}
-
 	now := time.Now().UTC().Format(time.RFC3339)
 
 	records, err := app.FindRecordsByFilter(
@@ -514,6 +544,13 @@ func RetryFailedWebhooks(app core.App) error {
 			continue
 		}
 
+		host := webhookHost(webhook.GetString("url"))
+		if !webhookBreaker.Allow(host) {
+			app.Logger().Debug("webhook circuit breaker open, skipping retry",
+				slog.String("host", host))
+			continue
+		}
+
 		// Reconstruct payload from stored request_body
 		payload, err := parseStoredPayload(record.Get("request_body"))
 		if err != nil {
@@ -535,7 +572,7 @@ func RetryFailedWebhooks(app core.App) error {
 			record.Set("next_retry_at", "")
 			record.Set("error_message", "")
 			record.Set("duration_ms", result.DurationMs)
-			webhookBreaker.RecordSuccess()
+			webhookBreaker.RecordSuccess(host)
 		} else {
 			record.Set("error_message", result.ErrorMessage)
 			record.Set("duration_ms", result.DurationMs)
@@ -548,7 +585,7 @@ func RetryFailedWebhooks(app core.App) error {
 			} else {
 				record.Set("next_retry_at", "")
 			}
-			webhookBreaker.RecordFailure()
+			webhookBreaker.RecordFailure(host)
 		}
 
 		if err := app.Save(record); err != nil {

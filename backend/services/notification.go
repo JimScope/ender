@@ -17,7 +17,7 @@ import (
 )
 
 var fcmClient *messaging.Client
-var fcmBreaker = NewCircuitBreaker("fcm", 5, 60*time.Second)
+var fcmBreaker = NewCircuitBreaker("fcm", 5, 60*time.Second, 5*time.Minute)
 
 // InitFCM initializes the Firebase Admin SDK from environment.
 func InitFCM(pbApp core.App) {
