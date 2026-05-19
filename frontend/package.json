@@ -56,7 +56,7 @@
     "@biomejs/biome": "^2.4.15",
     "@playwright/test": "1.58.2",
     "@tanstack/router-devtools": "^1.166.13",
-    "@tanstack/router-plugin": "^1.167.28",
+    "@tanstack/router-plugin": "^1.168.6",
     "@types/node": "^25.6.0",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
