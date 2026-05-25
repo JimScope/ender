@@ -42,7 +42,7 @@
     "pocketbase": "^0.26.9",
     "radix-ui": "^1.4.3",
     "react": "^19.2.6",
-    "react-dom": "^19.2.4",
+    "react-dom": "^19.2.6",
     "react-error-boundary": "^6.1.1",
     "react-hook-form": "^7.76.0",
     "react-i18next": "^17.0.8",
