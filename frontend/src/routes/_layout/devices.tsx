@@ -19,6 +19,7 @@ import { Separator } from "@/components/ui/separator"
 import useAppConfig from "@/hooks/useAppConfig"
 import { useDeviceListSuspense } from "@/hooks/useDeviceList"
 import { useModemStatus } from "@/hooks/useModemStatus"
+import { useSmppStatus } from "@/hooks/useSmppStatus"
 import type { Device } from "@/types/collections"
 
 export const Route = createFileRoute("/_layout/devices")({
@@ -46,7 +47,11 @@ function DevicesTableContent({ onAddDevice }: { onAddDevice: () => void }) {
   const { t } = useTranslation()
   const { data: devices } = useDeviceListSuspense()
   const { data: modemStatus } = useModemStatus()
-  const columns = useMemo(() => getColumns(t, modemStatus), [t, modemStatus])
+  const { data: smppStatus } = useSmppStatus()
+  const columns = useMemo(
+    () => getColumns(t, modemStatus, smppStatus),
+    [t, modemStatus, smppStatus],
+  )
 
   if (!devices?.data || devices.data.length === 0) {
     return <DevicesEmptyState onAddDevice={onAddDevice} />

@@ -3,14 +3,14 @@
 FROM golang:1.26-alpine AS builder
 WORKDIR /src
 COPY agent-core /src/agent-core
-COPY modem-agent /src/modem-agent
-WORKDIR /src/modem-agent
+COPY smpp-agent /src/smpp-agent
+WORKDIR /src/smpp-agent
 RUN go mod download
-RUN CGO_ENABLED=0 GOOS=linux go build -o /app/vendel-modem-agent -ldflags="-s -w" .
+RUN CGO_ENABLED=0 GOOS=linux go build -o /app/vendel-smpp-agent -ldflags="-s -w" .
 
 # Stage 2: Runtime
 FROM scratch
 WORKDIR /app
 COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
-COPY --from=builder /app/vendel-modem-agent /app/vendel-modem-agent
-ENTRYPOINT ["/app/vendel-modem-agent"]
+COPY --from=builder /app/vendel-smpp-agent /app/vendel-smpp-agent
+ENTRYPOINT ["/app/vendel-smpp-agent"]

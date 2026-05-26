@@ -1,0 +1,9 @@
+vendel_url: http://localhost:8090
+
+# One entry per SMPP bind. The api_key corresponds to a device of type "smpp"
+# created in Vendel; the rest of the bind details (host, port, system_id,
+# password, TON/NPI, throttle...) are stored encrypted in the backend and
+# fetched by the agent on startup.
+binds:
+  - api_key: "dk_your_device_api_key"
+  # - api_key: ${SMPP_DEVICE_API_KEY}   # env interpolation is supported

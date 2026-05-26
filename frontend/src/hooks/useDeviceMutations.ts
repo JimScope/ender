@@ -4,9 +4,25 @@ import pb from "@/lib/pocketbase"
 import useCustomToast from "./useCustomToast"
 
 interface DeviceCreate {
-  device_type: "android" | "modem"
+  device_type: "android" | "modem" | "smpp"
   name: string
   phone_number: string
+  smpp_config?: {
+    host: string
+    port: number
+    system_id: string
+    password: string
+    system_type?: string
+    bind_mode?: "tx" | "rx" | "trx"
+    source_ton?: number
+    source_npi?: number
+    dest_ton?: number
+    dest_npi?: number
+    use_tls?: boolean
+    enquire_link_seconds?: number
+    default_data_coding?: number
+    submit_throttle_tps?: number
+  }
 }
 
 interface DeviceUpdate {
@@ -20,10 +36,18 @@ export function useCreateDevice() {
 
   return useMutation({
     mutationFn: async (data: DeviceCreate) => {
-      return await pb.collection("sms_devices").create({
-        ...data,
+      const { smpp_config, ...deviceData } = data
+      const device = await pb.collection("sms_devices").create({
+        ...deviceData,
         user: pb.authStore.record?.id,
       })
+      if (deviceData.device_type === "smpp" && smpp_config) {
+        await pb.collection("smpp_configs").create({
+          device: device.id,
+          ...smpp_config,
+        })
+      }
+      return device
     },
     onSuccess: () => {
       showSuccessToast("Device created successfully")

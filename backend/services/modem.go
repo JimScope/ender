@@ -9,9 +9,10 @@ import (
 	"github.com/pocketbase/pocketbase/tools/subscriptions"
 )
 
-// NotifyModemAgent sends an SSE event to modem agents subscribed to "modem/<deviceId>".
-func NotifyModemAgent(app core.App, deviceId string, record *core.Record) {
-	topic := "modem/" + deviceId
+// NotifyAgent sends an SSE event to agents subscribed to "<deviceType>/<deviceId>".
+// deviceType must match one of the agent-backed device_type values ("modem", "smpp").
+func NotifyAgent(app core.App, deviceType, deviceId string, record *core.Record) {
+	topic := deviceType + "/" + deviceId
 
 	data, err := json.Marshal(map[string]string{
 		"message_id": record.Id,
@@ -19,7 +20,7 @@ func NotifyModemAgent(app core.App, deviceId string, record *core.Record) {
 		"body":       GetRecordBody(record),
 	})
 	if err != nil {
-		app.Logger().Error("failed to marshal modem SSE payload", slog.Any("error", err))
+		app.Logger().Error("failed to marshal agent SSE payload", slog.Any("error", err))
 		return
 	}
 
@@ -37,7 +38,8 @@ func NotifyModemAgent(app core.App, deviceId string, record *core.Record) {
 	}
 
 	if sent > 0 {
-		app.Logger().Info("notified modem agent via SSE",
+		app.Logger().Info("notified agent via SSE",
+			slog.String("device_type", deviceType),
 			slog.String("device", deviceId),
 			slog.String("message", record.Id),
 			slog.Int("subscribers", sent),
@@ -45,13 +47,14 @@ func NotifyModemAgent(app core.App, deviceId string, record *core.Record) {
 	}
 }
 
-// BroadcastModemStatus pushes the current online/offline state of all modem devices
-// to frontend clients subscribed to the "modem-status" topic.
-func BroadcastModemStatus(app core.App) {
+// BroadcastAgentStatus pushes the current online/offline state of all devices
+// of the given type to frontend clients subscribed to "<deviceType>-status".
+func BroadcastAgentStatus(app core.App, deviceType string) {
 	devices, err := app.FindRecordsByFilter(
 		"sms_devices",
-		"device_type = 'modem'",
+		"device_type = {:type}",
 		"", 0, 0,
+		dbx.Params{"type": deviceType},
 	)
 	if err != nil || len(devices) == 0 {
 		return
@@ -59,7 +62,7 @@ func BroadcastModemStatus(app core.App) {
 
 	online := make(map[string]bool, len(devices))
 	for _, d := range devices {
-		topic := "modem/" + d.Id
+		topic := deviceType + "/" + d.Id
 		connected := false
 		for _, client := range app.SubscriptionsBroker().Clients() {
 			if client.HasSubscription(topic) {
@@ -75,12 +78,13 @@ func BroadcastModemStatus(app core.App) {
 		return
 	}
 
+	statusTopic := deviceType + "-status"
 	msg := subscriptions.Message{
-		Name: "modem-status",
+		Name: statusTopic,
 		Data: data,
 	}
 	for _, client := range app.SubscriptionsBroker().Clients() {
-		if client.HasSubscription("modem-status") {
+		if client.HasSubscription(statusTopic) {
 			client.Send(msg)
 		}
 	}

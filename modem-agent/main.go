@@ -9,6 +9,7 @@ import (
 	"syscall"
 	"time"
 
+	agentcore "github.com/JimScope/vendel/agent-core"
 	"github.com/xlab/at"
 	"github.com/xlab/at/sms"
 )
@@ -73,7 +74,7 @@ func runModem(cfg ModemConfig, vendelURL string) {
 	}
 	log.Printf("%s modem initialized (profile: %s)", logPrefix, profileName)
 
-	client := NewVendelClient(vendelURL, cfg.APIKey)
+	client := agentcore.New(vendelURL, cfg.APIKey)
 
 	// Recover any pending messages and resolve the device record ID
 	pending, err := client.FetchPending()
@@ -81,11 +82,11 @@ func runModem(cfg ModemConfig, vendelURL string) {
 		log.Printf("%s failed to fetch pending messages: %v", logPrefix, err)
 		return
 	}
-	if client.deviceID == "" {
+	if client.DeviceID() == "" {
 		log.Printf("%s failed to resolve device ID from backend", logPrefix)
 		return
 	}
-	log.Printf("%s resolved device ID: %s", logPrefix, client.deviceID)
+	log.Printf("%s resolved device ID: %s", logPrefix, client.DeviceID())
 
 	if len(pending) > 0 {
 		log.Printf("%s processing %d pending message(s)", logPrefix, len(pending))
@@ -117,13 +118,13 @@ func runModem(cfg ModemConfig, vendelURL string) {
 	// Subscribe to SSE for real-time message assignment.
 	// ConnectSSE reconnects automatically on disconnect.
 	log.Printf("%s connecting to SSE for real-time dispatch", logPrefix)
-	client.ConnectSSE(func(msg PendingMessage) {
+	client.ConnectSSE("modem", func(msg agentcore.PendingMessage) {
 		log.Printf("%s received message %s -> %s", logPrefix, msg.MessageID, msg.Recipient)
 		sendAndReport(dev, client, msg, logPrefix)
 	})
 }
 
-func sendAndReport(dev *at.Device, client *VendelClient, msg PendingMessage, logPrefix string) {
+func sendAndReport(dev *at.Device, client *agentcore.Client, msg agentcore.PendingMessage, logPrefix string) {
 	if err := dev.SendSMS(msg.Body, sms.PhoneNumber(msg.Recipient)); err != nil {
 		log.Printf("%s send failed for %s: %v", logPrefix, msg.MessageID, err)
 		if reportErr := client.ReportStatus(msg.MessageID, "failed", err.Error()); reportErr != nil {

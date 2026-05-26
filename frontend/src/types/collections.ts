@@ -27,7 +27,26 @@ export interface User extends BaseRecord {
 
 // ── Devices ──────────────────────────────────────────────────────────
 
-export type DeviceType = "android" | "modem"
+export type DeviceType = "android" | "modem" | "smpp"
+
+export interface SMPPConfig extends BaseRecord {
+  device: string
+  host: string
+  port: number
+  system_id: string
+  /** Hidden — write-only */
+  password?: string
+  system_type: string
+  bind_mode: "tx" | "rx" | "trx"
+  source_ton: number
+  source_npi: number
+  dest_ton: number
+  dest_npi: number
+  use_tls: boolean
+  enquire_link_seconds: number
+  default_data_coding: number
+  submit_throttle_tps: number
+}
 
 export interface Device extends BaseRecord {
   name: string

@@ -6,6 +6,7 @@ import {
   Check,
   Copy,
   Plus,
+  Server,
   Smartphone,
   Usb,
 } from "lucide-react"
@@ -53,8 +54,18 @@ const formSchema = z.object({
     .max(20, { message: "Phone number must be at most 20 characters" }),
 })
 
+const smppFormSchema = z.object({
+  host: z.string().min(1, { message: "Host is required" }),
+  port: z.number().int().min(1).max(65535),
+  system_id: z.string().min(1, { message: "System ID is required" }),
+  password: z.string().min(1, { message: "Password is required" }),
+  system_type: z.string().optional(),
+  bind_mode: z.enum(["tx", "rx", "trx"]),
+})
+
 type FormData = z.infer<typeof formSchema>
-type DeviceType = "android" | "modem"
+type SMPPFormData = z.infer<typeof smppFormSchema>
+type DeviceType = "android" | "modem" | "smpp"
 
 const QR_PAYLOAD_VERSION = "0.1"
 const TOTAL_STEPS = 4
@@ -101,11 +112,26 @@ const AddDevice = ({ open, onOpenChange }: AddDeviceProps) => {
     },
   })
 
+  const smppForm = useForm<SMPPFormData>({
+    resolver: zodResolver(smppFormSchema),
+    mode: "onBlur",
+    criteriaMode: "all",
+    defaultValues: {
+      host: "",
+      port: 2775,
+      system_id: "",
+      password: "",
+      system_type: "",
+      bind_mode: "trx",
+    },
+  })
+
   const createDeviceMutation = useCreateDevice()
 
   const onSubmit = (data: FormData) => {
+    const smppData = deviceType === "smpp" ? smppForm.getValues() : undefined
     createDeviceMutation.mutate(
-      { ...data, device_type: deviceType },
+      { ...data, device_type: deviceType, smpp_config: smppData },
       {
         onSuccess: (response) => {
           setApiKey(response?.api_key ?? null)
@@ -115,12 +141,23 @@ const AddDevice = ({ open, onOpenChange }: AddDeviceProps) => {
     )
   }
 
+  const handleNextFromDetails = async () => {
+    const baseValid = await form.trigger()
+    if (!baseValid) return
+    if (deviceType === "smpp") {
+      const smppValid = await smppForm.trigger()
+      if (!smppValid) return
+    }
+    await form.handleSubmit(onSubmit)()
+  }
+
   const handleClose = (open: boolean) => {
     if (!open) {
       setStep(1)
       setDeviceType("android")
       setApiKey(null)
       form.reset()
+      smppForm.reset()
     }
     setIsOpen(open)
   }
@@ -154,9 +191,9 @@ const AddDevice = ({ open, onOpenChange }: AddDeviceProps) => {
       case 1:
         return t("devices.stepTypeDesc")
       case 2:
-        return deviceType === "android"
-          ? t("devices.stepDownloadAndroidDesc")
-          : t("devices.stepDownloadModemDesc")
+        if (deviceType === "android") return t("devices.stepDownloadAndroidDesc")
+        if (deviceType === "smpp") return t("devices.stepDownloadSmppDesc")
+        return t("devices.stepDownloadModemDesc")
       case 3:
         return t("devices.stepDetailsDesc")
       case 4:
@@ -224,6 +261,24 @@ const AddDevice = ({ open, onOpenChange }: AddDeviceProps) => {
                   </div>
                 </div>
               </button>
+              <button
+                type="button"
+                onClick={() => setDeviceType("smpp")}
+                className={cn(
+                  "flex items-start gap-3 rounded-lg border p-4 text-left transition-colors hover:bg-accent",
+                  deviceType === "smpp"
+                    ? "border-primary ring-1 ring-primary"
+                    : "border-border",
+                )}
+              >
+                <Server className="size-5 text-brand shrink-0 mt-0.5" />
+                <div className="flex-1">
+                  <div className="font-medium">{t("devices.smppGateway")}</div>
+                  <div className="text-sm text-muted-foreground">
+                    {t("devices.smppGatewayDesc")}
+                  </div>
+                </div>
+              </button>
             </div>
             <DialogFooter>
               <DialogClose asChild>
@@ -242,6 +297,13 @@ const AddDevice = ({ open, onOpenChange }: AddDeviceProps) => {
             <div className="rounded-lg border p-4 py-2">
               {deviceType === "android" ? (
                 <AndroidAppDownload />
+              ) : deviceType === "smpp" ? (
+                <div className="text-sm text-muted-foreground space-y-2">
+                  <p>{t("devices.smppAgentInfo")}</p>
+                  <pre className="bg-muted rounded p-2 overflow-x-auto font-mono text-xs">
+                    docker compose --profile smpp up -d smpp-agent
+                  </pre>
+                </div>
               ) : (
                 <ModemAgentDownload />
               )}
@@ -261,8 +323,8 @@ const AddDevice = ({ open, onOpenChange }: AddDeviceProps) => {
 
         {step === 3 && (
           <Form {...form}>
-            <form onSubmit={form.handleSubmit(onSubmit)}>
-              <div className="grid gap-4 py-4">
+            <div>
+              <div className="grid gap-4 py-4 max-h-[60vh] overflow-y-auto">
                 <FormField
                   control={form.control}
                   name="name"
@@ -306,6 +368,125 @@ const AddDevice = ({ open, onOpenChange }: AddDeviceProps) => {
                     </FormItem>
                   )}
                 />
+
+                {deviceType === "smpp" && (
+                  <Form {...smppForm}>
+                    <div className="border-t pt-4">
+                      <h4 className="font-medium mb-2">{t("devices.smppSettings")}</h4>
+                    </div>
+                    <FormField
+                      control={smppForm.control}
+                      name="host"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>
+                            {t("devices.smppHost")}{" "}
+                            <span className="text-destructive">*</span>
+                          </FormLabel>
+                          <FormControl>
+                            <Input placeholder="smpp.provider.com" {...field} required />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                    <FormField
+                      control={smppForm.control}
+                      name="port"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>
+                            {t("devices.smppPort")}{" "}
+                            <span className="text-destructive">*</span>
+                          </FormLabel>
+                          <FormControl>
+                            <Input
+                              type="number"
+                              value={field.value ?? ""}
+                              onChange={(e) =>
+                                field.onChange(
+                                  e.target.value === ""
+                                    ? undefined
+                                    : Number(e.target.value),
+                                )
+                              }
+                              onBlur={field.onBlur}
+                              name={field.name}
+                              ref={field.ref}
+                              required
+                            />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                    <FormField
+                      control={smppForm.control}
+                      name="system_id"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>
+                            {t("devices.smppSystemId")}{" "}
+                            <span className="text-destructive">*</span>
+                          </FormLabel>
+                          <FormControl>
+                            <Input {...field} required />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                    <FormField
+                      control={smppForm.control}
+                      name="password"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>
+                            {t("devices.smppPassword")}{" "}
+                            <span className="text-destructive">*</span>
+                          </FormLabel>
+                          <FormControl>
+                            <Input type="password" {...field} required />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                    <FormField
+                      control={smppForm.control}
+                      name="system_type"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>{t("devices.smppSystemType")}</FormLabel>
+                          <FormControl>
+                            <Input {...field} />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                    <FormField
+                      control={smppForm.control}
+                      name="bind_mode"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>{t("devices.smppBindMode")}</FormLabel>
+                          <FormControl>
+                            <select
+                              {...field}
+                              className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                            >
+                              <option value="trx">trx (transceiver)</option>
+                              <option value="tx">tx (transmitter)</option>
+                              <option value="rx">rx (receiver)</option>
+                            </select>
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                  </Form>
+                )}
               </div>
 
               <DialogFooter>
@@ -319,13 +500,14 @@ const AddDevice = ({ open, onOpenChange }: AddDeviceProps) => {
                   {t("common.back")}
                 </Button>
                 <LoadingButton
-                  type="submit"
+                  type="button"
+                  onClick={handleNextFromDetails}
                   loading={createDeviceMutation.isPending}
                 >
                   {t("devices.createDevice")}
                 </LoadingButton>
               </DialogFooter>
-            </form>
+            </div>
           </Form>
         )}
 

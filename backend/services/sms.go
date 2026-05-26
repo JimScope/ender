@@ -70,7 +70,7 @@ func resolveDevices(app core.App, userId, deviceId string) ([]*core.Record, erro
 
 	records, err := app.FindRecordsByFilter(
 		"sms_devices",
-		"user = {:userId} && (fcm_token != '' || device_type = 'modem')",
+		"user = {:userId} && (fcm_token != '' || device_type = 'modem' || device_type = 'smpp')",
 		"-created",
 		0, 0,
 		dbx.Params{"userId": userId},

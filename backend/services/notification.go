@@ -68,8 +68,9 @@ func DispatchMessages(app core.App, messages []*core.Record) {
 			continue
 		}
 
-		// Modem devices receive messages via SSE, not FCM
-		if device.GetString("device_type") == "modem" {
+		// Modem and SMPP devices receive messages via SSE, not FCM
+		dt := device.GetString("device_type")
+		if dt == "modem" || dt == "smpp" {
 			continue
 		}
 

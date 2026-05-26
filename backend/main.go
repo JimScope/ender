@@ -53,6 +53,7 @@ func main() {
 
 		// Custom API routes
 		handlers.RegisterSMSRoutes(se)
+		handlers.RegisterSMPPRoutes(se)
 		handlers.RegisterPlanRoutes(se)
 		handlers.RegisterUserWebhookRoutes(se)
 		handlers.RegisterWebhookRoutes(se)
@@ -76,6 +77,7 @@ func main() {
 	hooks.RegisterAuthHooks(app)
 	hooks.RegisterUserHooks(app)
 	hooks.RegisterDeviceHooks(app)
+	hooks.RegisterSMPPHooks(app)
 	hooks.RegisterWebhookHooks(app)
 	hooks.RegisterApiKeyHooks(app)
 	hooks.RegisterScheduledSMSHooks(app)

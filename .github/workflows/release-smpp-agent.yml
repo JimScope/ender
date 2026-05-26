@@ -1,0 +1,35 @@
+name: Release SMPP Agent
+
+on:
+  push:
+    tags:
+      - "smpp-agent/v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: smpp-agent/go.mod
+
+      - name: Strip tag prefix
+        run: echo "GORELEASER_CURRENT_TAG=${GITHUB_REF_NAME#smpp-agent/}" >> "$GITHUB_ENV"
+
+      - name: Run GoReleaser
+        uses: goreleaser/goreleaser-action@v7
+        with:
+          version: "~> v2"
+          args: release --clean
+          workdir: smpp-agent
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
