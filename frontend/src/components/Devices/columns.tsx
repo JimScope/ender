@@ -1,6 +1,6 @@
 import type { ColumnDef } from "@tanstack/react-table"
 import type { TFunction } from "i18next"
-import { Smartphone, Usb } from "lucide-react"
+import { Cloud, Smartphone, Usb } from "lucide-react"
 
 import { DeviceActionsMenu } from "@/components/Devices/DeviceActionsMenu"
 import { formatDate } from "@/lib/utils"
@@ -23,6 +23,19 @@ export function getColumns(
       header: t("devices.type"),
       cell: ({ row }) => {
         const type = row.original.device_type || "android"
+
+        if (type === "aws_aeum") {
+          return (
+            <span className="inline-flex items-center gap-1.5 text-muted-foreground">
+              <Cloud className="h-4 w-4" />
+              <span>{t("devices.awsAeum")}</span>
+              <span className="ml-1 text-xs text-muted-foreground">
+                {t("devices.awsAeumSubtext")}
+              </span>
+            </span>
+          )
+        }
+
         const isModem = type === "modem"
         const isOnline = isModem && modemStatus?.[row.original.id]
 

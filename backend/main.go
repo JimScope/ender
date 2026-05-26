@@ -10,6 +10,7 @@ import (
 	"vendel/hooks"
 	"vendel/middleware"
 	"vendel/services"
+	"vendel/services/smsprovider"
 	"vendel/ui"
 
 	_ "vendel/migrations"
@@ -51,8 +52,15 @@ func main() {
 			return fmt.Errorf("WEBHOOK_ENCRYPTION_KEY environment variable is required")
 		}
 
+		// Bootstrap the AWS End User Messaging device when enabled. Logged
+		// (not fatal) so a transient provider misconfig does not block startup.
+		if err := smsprovider.EnsureAEUMDevice(se.App); err != nil {
+			se.App.Logger().Error("failed to bootstrap AEUM device", "err", err)
+		}
+
 		// Custom API routes
 		handlers.RegisterSMSRoutes(se)
+		handlers.RegisterAEUMEventRoutes(se)
 		handlers.RegisterPlanRoutes(se)
 		handlers.RegisterUserWebhookRoutes(se)
 		handlers.RegisterWebhookRoutes(se)

@@ -18,6 +18,8 @@ interface DeviceActionsMenuProps {
 export const DeviceActionsMenu = ({ device }: DeviceActionsMenuProps) => {
   const [open, setOpen] = useState(false)
 
+  if (device.device_type === "aws_aeum") return null
+
   return (
     <DropdownMenu open={open} onOpenChange={setOpen}>
       <DropdownMenuTrigger asChild>

@@ -27,7 +27,7 @@ export interface User extends BaseRecord {
 
 // ── Devices ──────────────────────────────────────────────────────────
 
-export type DeviceType = "android" | "modem"
+export type DeviceType = "android" | "modem" | "aws_aeum"
 
 export interface Device extends BaseRecord {
   name: string

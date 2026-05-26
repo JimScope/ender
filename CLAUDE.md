@@ -80,6 +80,7 @@ npx playwright test --ui      # Interactive UI mode
 - **FCM**: Firebase Cloud Messaging for push notifications to devices (via goroutines)
 - **Payments**: QvaPay for subscription billing
 - **Email**: PocketBase built-in SMTP, Mailcatcher for local dev at localhost:1080
+- **AWS End User Messaging (AEUM)**: optional provider for SMS, short codes, and RCS text. Lives in `backend/services/smsprovider/`. Enabled via `AEUM_ENABLED=true` and an AWS phone pool ARN. See `docs/aws-end-user-messaging-setup.md`. The interface is intentionally tiny (`Provider` with `Name`, `IsConfigured`, `Send`); adding a new provider (Twilio, MessageBird, etc.) means adding a file in `services/smsprovider/` and a singleton constructor.
 
 ## Design System
 
@@ -112,6 +113,7 @@ When changing visual styles (colors, fonts, spacing, component patterns), update
 | API route | `handlers/<domain>.go` | `RegisterXxxRoutes(se *core.ServeEvent)` |
 | Business logic | `services/<domain>.go` | Pure functions taking `core.App` |
 | Request middleware | `middleware/` | Func returning `func(*core.RequestEvent) error` |
+| External SMS provider (AEUM, future Twilio, etc.) | `services/smsprovider/<provider>.go` | `New<X>Provider(cfg)` returns a `Provider`; singleton via `Default<X>()` if env-driven |
 
 **Rules:**
 - Each `hooks/` file owns **one domain** (e.g., devices, webhooks). If a new collection needs hooks, create a new file — don't append to an unrelated one.

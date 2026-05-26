@@ -264,6 +264,8 @@
     "androidPhoneDesc": "Use an Android phone with the Vendel app installed",
     "usbModem": "USB Modem",
     "usbModemDesc": "Use a USB 4G/LTE modem with a SIM card via the modem agent",
+    "awsAeum": "AWS End User Messaging",
+    "awsAeumSubtext": "SMS / RCS text / short codes",
     "stepTypeTitle": "Choose device type",
     "stepTypeDesc": "Select the kind of gateway you will use to send SMS",
     "stepDownloadTitle": "Install first",

@@ -84,6 +84,26 @@ Vendel is a full-stack platform for SMS management and delivery through connecte
 - QR codes for device onboarding
 - Public API for external systems
 
+## External SMS providers
+
+Vendel can deliver SMS through external gateways in addition to physical Android phones and USB modems. Today AWS End User Messaging (AEUM) is supported as the first such provider.
+
+When `AEUM_ENABLED=true`, Vendel creates a global virtual device "AWS End User Messaging" that:
+- Appears in every user's device list (read-only).
+- Acts as fallback when a user has no physical devices online.
+- Can be targeted explicitly via `device_id` on `POST /api/sms/send`.
+
+The AWS pool you point at can include short codes, sender IDs, 10DLC numbers, and RCS Agents. Vendel calls `SendTextMessage` once per recipient; AWS picks the channel and origination identity from the pool.
+
+Delivery events flow back via SNS HTTPS subscription to `/api/webhooks/aws-aeum-events`; Vendel updates `sms_messages.status` and fires standard `sms_delivered` / `sms_failed` webhooks.
+
+Setup: see [`docs/aws-end-user-messaging-setup.md`](docs/aws-end-user-messaging-setup.md).
+
+Limitations of the MVP:
+- RCS is text only — no rich cards, carousels, media or suggested replies.
+- Channel selection lives in AWS (the pool decides); Vendel exposes only `channel=auto`.
+- Cost is not tracked in Vendel; configure a monthly spend limit in the AWS console.
+
 ## Project Structure
 
 ```

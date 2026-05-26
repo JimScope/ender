@@ -9,6 +9,8 @@ import (
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/pocketbase/pocketbase/tools/routine"
 	"github.com/pocketbase/pocketbase/tools/types"
+
+	"vendel/services/smsprovider"
 )
 
 // TemplateOptions holds template interpolation data for per-recipient message generation.
@@ -28,7 +30,8 @@ func SendSMS(app core.App, userId string, recipients []string, body string, devi
 		return nil, err
 	}
 
-	devices, err := resolveDevices(app, userId, deviceId)
+	aeumProvider := smsprovider.DefaultAEUM()
+	devices, err := resolveDevices(app, userId, deviceId, aeumProvider)
 	if err != nil {
 		return nil, err
 	}
@@ -49,18 +52,36 @@ func SendSMS(app core.App, userId string, recipients []string, body string, devi
 	}
 
 	if len(devices) > 0 {
-		routine.FireAndForget(func() { DispatchMessages(app, messages) })
+		physical, externalByType := partitionByProvider(app, messages)
+		if len(physical) > 0 {
+			routine.FireAndForget(func() { DispatchMessages(app, physical) })
+		}
+		for deviceType, msgs := range externalByType {
+			provider := smsprovider.Get(deviceType)
+			if provider == nil || len(msgs) == 0 {
+				continue
+			}
+			routine.FireAndForget(func() { DispatchProviderMessages(app, provider, msgs) })
+		}
 	}
 
 	return messages, nil
 }
 
-// resolveDevices returns the target device(s) for sending.
-func resolveDevices(app core.App, userId, deviceId string) ([]*core.Record, error) {
+// resolveDevices returns the target device(s) for sending. When deviceId is
+// empty, physical devices (FCM/modem) take precedence over the global AEUM
+// fallback so user-owned hardware keeps working without changes.
+func resolveDevices(app core.App, userId, deviceId string, aeumProvider smsprovider.Provider) ([]*core.Record, error) {
 	if deviceId != "" {
 		device, err := app.FindRecordById("sms_devices", deviceId)
 		if err != nil {
 			return nil, fmt.Errorf("device not found: %w", err)
+		}
+		if device.GetString("device_type") == smsprovider.DeviceTypeAEUM {
+			if aeumProvider == nil || !aeumProvider.IsConfigured() {
+				return nil, fmt.Errorf("AWS End User Messaging is not configured")
+			}
+			return []*core.Record{device}, nil
 		}
 		if device.GetString("user") != userId {
 			return nil, fmt.Errorf("device does not belong to user")
@@ -68,17 +89,25 @@ func resolveDevices(app core.App, userId, deviceId string) ([]*core.Record, erro
 		return []*core.Record{device}, nil
 	}
 
-	records, err := app.FindRecordsByFilter(
+	physical, err := app.FindRecordsByFilter(
 		"sms_devices",
 		"user = {:userId} && (fcm_token != '' || device_type = 'modem')",
 		"-created",
 		0, 0,
 		dbx.Params{"userId": userId},
 	)
-	if err != nil || len(records) == 0 {
+	if err == nil && len(physical) > 0 {
+		return physical, nil
+	}
+
+	if aeumProvider == nil || !aeumProvider.IsConfigured() {
 		return nil, nil
 	}
-	return records, nil
+	aeum, err := app.FindFirstRecordByFilter("sms_devices", "device_type = {:t}", dbx.Params{"t": smsprovider.DeviceTypeAEUM})
+	if err != nil || aeum == nil {
+		return nil, nil
+	}
+	return []*core.Record{aeum}, nil
 }
 
 // buildContactMap fetches contacts matching the given phone numbers and indexes them by phone.
@@ -186,39 +215,49 @@ func interpolateForRecipient(tmpl *TemplateOptions, phone string, contactMap map
 	return StripInvisibleUnicode(result)
 }
 
+// statusToHookEvent maps an sms_messages.status terminal value to the
+// outbound webhook event Vendel fires. Centralised so device ACKs, AEUM
+// delivery webhooks and future provider DLR handlers stay consistent.
+var statusToHookEvent = map[string]string{
+	"sent":      "sms_sent",
+	"delivered": "sms_delivered",
+	"failed":    "sms_failed",
+}
+
+// MarkMessageTerminal applies a terminal lifecycle update to an sms_messages
+// record: sets status, the matching timestamp and error_message, persists,
+// and fires the outbound webhook. Callers may mutate other fields on msg
+// before calling — those writes ride along in the same Save.
+func MarkMessageTerminal(app core.App, msg *core.Record, status, errorMessage string) error {
+	msg.Set("status", status)
+	if errorMessage != "" {
+		msg.Set("error_message", errorMessage)
+	}
+	switch status {
+	case "sent":
+		msg.Set("sent_at", types.NowDateTime())
+	case "delivered":
+		msg.Set("delivered_at", types.NowDateTime())
+	}
+	if err := app.Save(msg); err != nil {
+		return err
+	}
+	if event, ok := statusToHookEvent[status]; ok {
+		TriggerWebhooks(app, msg.GetString("user"), msg, event)
+	}
+	return nil
+}
+
 // ProcessSMSAck handles device acknowledgment for a sent SMS.
 func ProcessSMSAck(app core.App, deviceId string, messageId string, status string, errorMessage string) error {
 	record, err := app.FindRecordById("sms_messages", messageId)
 	if err != nil {
 		return fmt.Errorf("message not found: %w", err)
 	}
-
 	if record.GetString("device") != deviceId {
 		return fmt.Errorf("message does not belong to this device")
 	}
-
-	record.Set("status", status)
-	if errorMessage != "" {
-		record.Set("error_message", errorMessage)
-	}
-
-	switch status {
-	case "sent":
-		record.Set("sent_at", types.NowDateTime())
-	case "delivered":
-		record.Set("delivered_at", types.NowDateTime())
-	}
-
-	if err := app.Save(record); err != nil {
-		return err
-	}
-
-	eventMap := map[string]string{"sent": "sms_sent", "delivered": "sms_delivered", "failed": "sms_failed"}
-	if event, ok := eventMap[status]; ok {
-		routine.FireAndForget(func() { TriggerWebhooks(app, record.GetString("user"), record, event) })
-	}
-
-	return nil
+	return MarkMessageTerminal(app, record, status, errorMessage)
 }
 
 // HandleIncomingSMS processes an incoming SMS from a device and triggers webhooks.

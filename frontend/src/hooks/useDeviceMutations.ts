@@ -8,6 +8,7 @@ interface DeviceCreate {
   name: string
   phone_number: string
 }
+// Note: "aws_aeum" devices are created by the backend (system-global), not via this hook.
 
 interface DeviceUpdate {
   name?: string
