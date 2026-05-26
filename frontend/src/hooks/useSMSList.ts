@@ -13,6 +13,7 @@ export const smsListQueryOptions = (messageType: SMSMessageType = "all") =>
       const result = await pb.collection("sms_messages").getList(1, 100, {
         sort: "-created",
         filter,
+        expand: "device",
       })
       return { data: result.items, count: result.totalItems }
     },

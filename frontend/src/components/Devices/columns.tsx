@@ -1,8 +1,8 @@
 import type { ColumnDef } from "@tanstack/react-table"
 import type { TFunction } from "i18next"
-import { Cloud, Smartphone, Usb } from "lucide-react"
 
 import { DeviceActionsMenu } from "@/components/Devices/DeviceActionsMenu"
+import { deviceIcon } from "@/components/Devices/DeviceCell"
 import { formatDate } from "@/lib/utils"
 import type { Device } from "@/types/collections"
 
@@ -23,11 +23,12 @@ export function getColumns(
       header: t("devices.type"),
       cell: ({ row }) => {
         const type = row.original.device_type || "android"
+        const Icon = deviceIcon(type)
 
         if (type === "aws_aeum") {
           return (
             <span className="inline-flex items-center gap-1.5 text-muted-foreground">
-              <Cloud className="h-4 w-4" />
+              <Icon className="h-4 w-4" />
               <span>{t("devices.awsAeum")}</span>
               <span className="ml-1 text-xs text-muted-foreground">
                 {t("devices.awsAeumSubtext")}
@@ -41,11 +42,7 @@ export function getColumns(
 
         return (
           <span className="inline-flex items-center gap-1.5 text-muted-foreground">
-            {isModem ? (
-              <Usb className="h-4 w-4" />
-            ) : (
-              <Smartphone className="h-4 w-4" />
-            )}
+            <Icon className="h-4 w-4" />
             {isModem ? t("devices.usbModem") : t("devices.androidPhone")}
             {isModem && (
               <span

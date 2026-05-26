@@ -87,9 +87,12 @@ func DispatchProviderMessages(app core.App, provider smsprovider.Provider, messa
 }
 
 func dispatchOne(app core.App, provider smsprovider.Provider, m *core.Record) {
+	// External providers receive plaintext; the row body is at-rest encrypted
+	// by the encryption hooks, so we must decrypt here. GetRecordBody falls
+	// back to the raw value if the row predates the encryption migration.
 	req := smsprovider.SendRequest{
 		To:          m.GetString("to"),
-		Body:        m.GetString("body"),
+		Body:        GetRecordBody(m),
 		ChannelHint: smsprovider.ChannelAuto,
 	}
 	result, err := provider.Send(context.Background(), req)

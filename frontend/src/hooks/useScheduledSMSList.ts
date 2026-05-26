@@ -7,6 +7,7 @@ export const scheduledSMSListQueryOptions = queryOptions({
   queryFn: async () => {
     const result = await pb.collection("scheduled_sms").getList(1, 100, {
       sort: "-created",
+      expand: "device_id",
     })
     return { data: result.items, count: result.totalItems }
   },

@@ -1,6 +1,7 @@
 import type { ColumnDef } from "@tanstack/react-table"
 import type { TFunction } from "i18next"
 
+import { DeviceCell } from "@/components/Devices/DeviceCell"
 import { Badge } from "@/components/ui/badge"
 import { cn, formatDate } from "@/lib/utils"
 import type { ScheduledSMS } from "@/types/collections"
@@ -11,6 +12,11 @@ export const getColumns = (t: TFunction): ColumnDef<ScheduledSMS>[] => [
     accessorKey: "name",
     header: t("common.name"),
     cell: ({ row }) => <span className="font-medium">{row.original.name}</span>,
+  },
+  {
+    accessorKey: "device_id",
+    header: t("sms.device"),
+    cell: ({ row }) => <DeviceCell device={row.original.expand?.device_id} />,
   },
   {
     accessorKey: "schedule_type",

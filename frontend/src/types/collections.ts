@@ -69,6 +69,9 @@ export interface SMSMessage extends BaseRecord {
   delivered_at: string
   retry_count: number
   last_retry_at: string
+  expand?: {
+    device?: Device
+  }
 }
 
 // ── Webhook Configs ──────────────────────────────────────────────────
@@ -141,6 +144,9 @@ export interface ScheduledSMS extends BaseRecord {
   next_run_at: string
   last_run_at: string
   status: ScheduleStatus
+  expand?: {
+    device_id?: Device
+  }
 }
 
 // ── Plans & Billing ──────────────────────────────────────────────────

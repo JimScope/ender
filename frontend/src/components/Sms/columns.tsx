@@ -1,76 +1,89 @@
 import type { ColumnDef } from "@tanstack/react-table"
 import type { TFunction } from "i18next"
-import { Check, Copy } from "lucide-react"
-import { useCopyToClipboard } from "@/hooks/useCopyToClipboard"
+
+import { DeviceCell } from "@/components/Devices/DeviceCell"
+import { Badge } from "@/components/ui/badge"
+import { formatDate } from "@/lib/utils"
 import type { SMSMessage } from "@/types/collections"
-import { Button } from "../ui/button"
 import { SMSActionsMenu } from "./SMSActionsMenu"
 
-function CopyId({ id, t }: { id: string; t: TFunction }) {
-  const [copiedText, copy] = useCopyToClipboard()
-  const isCopied = copiedText === id
+function statusBadgeVariant(
+  status: string,
+): "default" | "secondary" | "destructive" | "outline" {
+  switch (status) {
+    case "delivered":
+      return "default"
+    case "sent":
+      return "secondary"
+    case "failed":
+      return "destructive"
+    default:
+      return "outline"
+  }
+}
 
-  return (
-    <div className="flex items-center gap-1.5 group">
-      <span className="font-mono text-xs text-muted-foreground">{id}</span>
-      <Button
-        variant="ghost"
-        size="icon"
-        className="size-6 opacity-0 group-hover:opacity-100 transition-opacity"
-        onClick={() => copy(id)}
-      >
-        {isCopied ? (
-          <Check className="size-3 text-green-500" />
-        ) : (
-          <Copy className="size-3" />
-        )}
-        <span className="sr-only">{t("sms.copyId")}</span>
-      </Button>
-    </div>
-  )
+function truncate(text: string, maxLength: number): string {
+  if (text.length <= maxLength) return text
+  return `${text.slice(0, maxLength)}...`
 }
 
 export function getColumns(t: TFunction): ColumnDef<SMSMessage>[] {
   return [
     {
-      accessorKey: "id",
-      header: t("sms.id"),
-      cell: ({ row }) => <CopyId id={row.original.id} t={t} />,
+      accessorKey: "to",
+      header: t("sms.to"),
+      cell: ({ row }) => {
+        const msg = row.original
+        const display =
+          msg.message_type === "incoming" ? msg.from_number || msg.to : msg.to
+        return <span className="font-medium">{display}</span>
+      },
     },
     {
       accessorKey: "device",
-      header: t("sms.deviceId"),
-      cell: ({ row }) => (
-        <span className="font-medium">{row.original.device}</span>
-      ),
+      header: t("sms.device"),
+      cell: ({ row }) => <DeviceCell device={row.original.expand?.device} />,
     },
     {
-      accessorKey: "to",
-      header: t("sms.to"),
-      cell: ({ row }) => <span className="font-medium">{row.original.to}</span>,
-    },
-    {
-      accessorKey: "message_type",
-      header: t("sms.messageType"),
+      accessorKey: "body",
+      header: t("sms.body"),
       cell: ({ row }) => (
-        <span className="font-medium">{row.original.message_type}</span>
+        <span className="max-w-xs truncate" title={row.original.body}>
+          {truncate(row.original.body, 50)}
+        </span>
       ),
     },
     {
       accessorKey: "status",
       header: t("common.status"),
       cell: ({ row }) => (
-        <span className="font-medium">{row.original.status}</span>
+        <Badge variant={statusBadgeVariant(row.original.status || "pending")}>
+          {row.original.status || "pending"}
+        </Badge>
+      ),
+    },
+    {
+      accessorKey: "message_type",
+      header: t("sms.type"),
+      cell: ({ row }) => (
+        <Badge variant="outline">
+          {row.original.message_type || "outgoing"}
+        </Badge>
+      ),
+    },
+    {
+      accessorKey: "created",
+      header: t("sms.date"),
+      cell: ({ row }) => (
+        <span className="text-muted-foreground text-sm">
+          {formatDate(row.original.created)}
+        </span>
       ),
     },
     {
       id: "actions",
-      header: () => <span className="sr-only">{t("common.actions")}</span>,
-      cell: ({ row }) => (
-        <div className="flex justify-end">
-          <SMSActionsMenu sms={row.original} />
-        </div>
-      ),
+      header: () => null,
+      cell: ({ row }) => <SMSActionsMenu sms={row.original} />,
     },
   ]
 }

@@ -472,6 +472,7 @@ Reutilizar `DispatchProviderMessages()` de AEUM si ya existe. Si no existe, crea
 
 Debe:
 - Construir `smsprovider.SendRequest` con `To: m.GetString("to")`.
+- **`Body`: usar `services.GetRecordBody(m)`, NO `m.GetString("body")`.** El body se persiste cifrado at-rest (prefijo `fenc:`) por los hooks de encryption. Sin desencriptar, el provider recibe `fenc:...` y eso se envía como texto cifrado al destinatario. `GetRecordBody` (definido en `services/bodyencrypt.go`) maneja la desencriptación y cae al raw value si el row predates la migración de encryption. Este bug se introdujo en la implementación inicial AEUM y se corrigió retroactivamente; aplica igual a SMPP.
 - Llamar `provider.Send()`.
 - Persistir `provider_message_id` antes de disparar webhooks.
 - Persistir `provider_channel` y `provider_origination_identity` si el provider los devuelve.
