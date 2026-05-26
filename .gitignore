@@ -18,3 +18,7 @@ backend/ui/dist/*
 
 # Modem agent binary
 modem-agent/vendel-modem-agent
+
+# Local agent / review tooling state (not part of the project)
+.claude/scheduled_tasks.lock
+.codex/

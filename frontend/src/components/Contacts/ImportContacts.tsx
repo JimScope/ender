@@ -99,9 +99,9 @@ const ImportContacts = () => {
           </div>
 
           <div className="grid gap-2">
-            <label className="text-sm font-medium">
+            <span className="text-sm font-medium">
               {t("contacts.importToGroup")}
-            </label>
+            </span>
             <MultiSelect
               options={(groups?.data || []).map((group) => ({
                 label: group.name,

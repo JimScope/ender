@@ -35,7 +35,7 @@ function resolveGroupNames(groupIds: string[], groups: ContactGroup[]): string {
 }
 
 function exportCSV(contacts: Contact[], groups: ContactGroup[]) {
-  const escape = (value: string) => {
+  const escapeCSVValue = (value: string) => {
     if (value.includes(",") || value.includes('"') || value.includes("\n")) {
       return `"${value.replace(/"/g, '""')}"`
     }
@@ -44,10 +44,10 @@ function exportCSV(contacts: Contact[], groups: ContactGroup[]) {
 
   const headers = ["Name", "Phone Number", "Groups", "Notes"]
   const rows = contacts.map((c) => [
-    escape(c.name),
-    escape(c.phone_number),
-    escape(resolveGroupNames(c.groups || [], groups)),
-    escape(c.notes || ""),
+    escapeCSVValue(c.name),
+    escapeCSVValue(c.phone_number),
+    escapeCSVValue(resolveGroupNames(c.groups || [], groups)),
+    escapeCSVValue(c.notes || ""),
   ])
 
   const csv = [headers.join(","), ...rows.map((r) => r.join(","))].join("\n")
