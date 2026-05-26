@@ -17,6 +17,18 @@ export function getBrowserTimezone(): string {
 }
 
 /**
+ * Returns the current instant formatted for a `datetime-local` input's `min`
+ * attribute ("YYYY-MM-DDTHH:mm") in the browser's local timezone. The browser
+ * uses this string to block selection of past times in the native picker.
+ */
+export function nowLocalDatetime(): string {
+  const d = new Date()
+  return new Date(d.getTime() - d.getTimezoneOffset() * 60000)
+    .toISOString()
+    .slice(0, 16)
+}
+
+/**
  * Converts a naive datetime string (from a `datetime-local` input) to a
  * UTC ISO-8601 string, interpreting the datetime as being in `timezone`.
  *

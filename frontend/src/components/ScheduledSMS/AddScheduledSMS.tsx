@@ -40,20 +40,38 @@ import { Textarea } from "@/components/ui/textarea"
 import { useDeviceList } from "@/hooks/useDeviceList"
 import { useCreateScheduledSMS } from "@/hooks/useScheduledSMSMutations"
 import { COMMON_TIMEZONES } from "@/lib/constants"
-import { getBrowserTimezone, naiveDatetimeToUTC } from "@/lib/datetime"
+import {
+  getBrowserTimezone,
+  naiveDatetimeToUTC,
+  nowLocalDatetime,
+} from "@/lib/datetime"
 
-const formSchema = z.object({
-  name: z.string().min(1, "Name is required").max(100),
-  recipients: z
-    .array(z.e164().min(1))
-    .min(1, "At least one recipient is required"),
-  body: z.string().min(1, "Message body is required").max(1600),
-  device_id: z.array(z.string()).optional(),
-  schedule_type: z.enum(["one_time", "recurring"]),
-  scheduled_at: z.string().optional(),
-  cron_expression: z.string().optional(),
-  timezone: z.string().min(1),
-})
+const formSchema = z
+  .object({
+    name: z.string().min(1, "Name is required").max(100),
+    recipients: z
+      .array(z.e164().min(1))
+      .min(1, "At least one recipient is required"),
+    body: z.string().min(1, "Message body is required").max(1600),
+    device_id: z.array(z.string()).optional(),
+    schedule_type: z.enum(["one_time", "recurring"]),
+    scheduled_at: z.string().optional(),
+    cron_expression: z.string().optional(),
+    timezone: z.string().min(1),
+  })
+  .superRefine((data, ctx) => {
+    if (data.schedule_type !== "one_time" || !data.scheduled_at) return
+    const whenUtc = new Date(
+      naiveDatetimeToUTC(data.scheduled_at, data.timezone),
+    ).getTime()
+    if (Number.isNaN(whenUtc) || whenUtc <= Date.now()) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["scheduled_at"],
+        message: "scheduled_at must be in the future",
+      })
+    }
+  })
 
 type FormData = z.infer<typeof formSchema>
 
@@ -265,7 +283,12 @@ const AddScheduledSMS = () => {
                         <span className="text-destructive">*</span>
                       </FormLabel>
                       <FormControl>
-                        <Input type="datetime-local" {...field} required />
+                        <Input
+                          type="datetime-local"
+                          min={nowLocalDatetime()}
+                          {...field}
+                          required
+                        />
                       </FormControl>
                       <FormMessage />
                     </FormItem>
