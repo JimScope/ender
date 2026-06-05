@@ -14,11 +14,17 @@ import (
 
 // RegisterWebhookRoutes registers payment provider webhook endpoints.
 func RegisterWebhookRoutes(se *core.ServeEvent) {
-	// POST /api/webhooks/{provider} — Payment webhook callback
-	se.Router.POST("/api/webhooks/{provider}", func(e *core.RequestEvent) error {
+	handler := func(e *core.RequestEvent) error {
 		providerName := e.Request.PathValue("provider")
 		return handlePaymentWebhook(e, providerName)
-	})
+	}
+	// POST /api/webhooks/{provider} — Payment webhook callback.
+	// The trailing-slash variant is registered too so a webhook URL copied
+	// into a provider dashboard with a trailing slash still reaches this
+	// handler instead of falling through to the GET-only SPA catch-all,
+	// which would make Go's ServeMux reply 405 Method Not Allowed.
+	se.Router.POST("/api/webhooks/{provider}", handler)
+	se.Router.POST("/api/webhooks/{provider}/", handler)
 }
 
 // RegisterUserWebhookRoutes registers user-facing webhook management endpoints.
