@@ -4,10 +4,10 @@ import (
 	"bytes"
 	"fmt"
 	"sort"
+	"strings"
 	"sync/atomic"
 	"time"
 	"unicode/utf16"
-	"unicode/utf8"
 
 	"github.com/xlab/at"
 	"github.com/xlab/at/pdu"
@@ -30,6 +30,27 @@ const (
 // the process; receivers only compare it per-sender so a byte wrap is fine.
 var msgRef atomic.Uint32
 
+// gsm7ExtensionChars are the GSM 03.38 default-alphabet extension characters.
+// Each encodes as an ESC (0x1B) prefix plus the base char, so it occupies two
+// septets, not one.
+const gsm7ExtensionChars = "^{}\\[~]|€"
+
+// gsm7Septets counts the GSM-7 septets needed to encode text, treating each
+// extension-table char as two. A plain rune count under-estimates the
+// single-PDU budget — 160 "€" are 7-bit-encodable yet need 320 septets, so
+// they must not take the single-PDU path. Assumes pdu.Is7BitEncodable(text).
+func gsm7Septets(text string) int {
+	septets := 0
+	for _, r := range text {
+		if strings.ContainsRune(gsm7ExtensionChars, r) {
+			septets += 2
+		} else {
+			septets++
+		}
+	}
+	return septets
+}
+
 // sendSMS sends a text message, transparently splitting long texts into
 // concatenated parts. Short messages use the library's single-PDU path.
 //
@@ -40,7 +61,7 @@ var msgRef atomic.Uint32
 // for long pure-GSM texts (67 vs 153 chars per part); the gain is PDU
 // construction simple enough to be verifiably correct.
 func sendSMS(dev *at.Device, text, recipient string) error {
-	if pdu.Is7BitEncodable(text) && utf8.RuneCountInString(text) <= maxGsm7SingleLen {
+	if pdu.Is7BitEncodable(text) && gsm7Septets(text) <= maxGsm7SingleLen {
 		return dev.SendSMS(text, sms.PhoneNumber(recipient))
 	}
 

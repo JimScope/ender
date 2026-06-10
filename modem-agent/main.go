@@ -182,7 +182,12 @@ func runModemSession(ctx context.Context, cfg ModemConfig, vendelURL string, hea
 	if err := dev.Open(); err != nil {
 		return fmt.Errorf("open modem: %w", err)
 	}
-	defer dev.Close()
+	// Close exactly once: the normal shutdown path closes the device before
+	// wg.Wait() (so the untracked Watch goroutine can't block draining), while
+	// the early-return paths below rely on this deferred close.
+	var closeOnce sync.Once
+	closeDevice := func() { closeOnce.Do(func() { dev.Close() }) }
+	defer closeDevice()
 
 	// The shared mutex serializes every AT exchange on the command port:
 	// our sends (CMGS) and Watch's reads (CMGR/CMGD) via the profile.
@@ -286,6 +291,11 @@ func runModemSession(ctx context.Context, cfg ModemConfig, vendelURL string, hea
 	)
 
 	cancel()
+	// Close the device before waiting: dev.Watch() runs untracked and can
+	// block pushing to IncomingSms once incomingLoop stops reading. Closing
+	// here lets incomingLoop's drain observe dev.Closed() and return, so
+	// wg.Wait() can't hang on a stuck Watch goroutine.
+	closeDevice()
 	wg.Wait()
 	return nil
 }
@@ -374,7 +384,17 @@ func incomingLoop(ctx context.Context, dev *at.Device, client *VendelClient, log
 	for {
 		select {
 		case <-ctx.Done():
-			return
+			// dev.Watch() is untracked and blocks if IncomingSms fills with no
+			// reader, leaking the goroutine until process exit. Drain
+			// (discarding) until the device closes so Watch can always finish
+			// its send and return.
+			for {
+				select {
+				case <-dev.Closed():
+					return
+				case <-dev.IncomingSms():
+				}
+			}
 		case <-flushTicker.C:
 			// A lost part must not black-hole the rest of the message:
 			// report stale partials with whatever arrived, in order.

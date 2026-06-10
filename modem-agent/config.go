@@ -69,6 +69,13 @@ func loadConfig() Config {
 		configFile = "modems.yaml"
 	}
 
+	// A bind mount of a host path that does not exist yet makes Docker create
+	// an empty DIRECTORY at the target, so os.ReadFile below would fail with an
+	// opaque "is a directory". Detect it and explain the real cause.
+	if info, err := os.Stat(configFile); err == nil && info.IsDir() {
+		log.Fatalf("config path %s is a directory, not a file — create it on the host before starting the container (cp modem-agent/modems.example.yaml modem-agent/modems.yaml)", configFile)
+	}
+
 	checkConfigPermissions(configFile)
 
 	data, err := os.ReadFile(configFile)
