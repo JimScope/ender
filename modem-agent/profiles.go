@@ -126,9 +126,14 @@ func (p *HuaweiProfile) Init(d *at.Device) error {
 	}
 	if p.singlePort {
 		// Same rationale as GenericProfile: without Watch() nobody consumes
-		// unsolicited reports, so silence them after the vendor init.
+		// unsolicited reports, so silence them after the vendor init. The
+		// default Huawei init turned CLIP on — turn it back off so an inbound
+		// call's +CLIP URC can't corrupt a command reply on the shared port.
 		if err := p.CNMI(0, 0, 0, 0, 0); err != nil {
 			return fmt.Errorf("at init: unable to turn off message notifications: %w", err)
+		}
+		if err := p.CLIP(false); err != nil {
+			return fmt.Errorf("at init: unable to turn off calling party ID notifications: %w", err)
 		}
 	}
 	return nil
