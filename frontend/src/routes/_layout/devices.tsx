@@ -57,6 +57,7 @@ function DevicesTableContent({ onAddDevice }: { onAddDevice: () => void }) {
       columns={columns}
       data={(devices?.data ?? []) as unknown as Device[]}
       caption={t("devices.registeredDevices")}
+      totalCount={devices?.count}
     />
   )
 }

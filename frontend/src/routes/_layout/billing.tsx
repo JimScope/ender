@@ -36,6 +36,7 @@ function BillingTableContent() {
       columns={columns}
       data={(payments?.data ?? []) as unknown as Payment[]}
       caption={t("billing.paymentHistory")}
+      totalCount={payments?.count}
     />
   )
 }

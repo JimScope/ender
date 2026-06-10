@@ -16,7 +16,10 @@ import { routeTree } from "./routeTree.gen"
 
 const handleApiError = (error: unknown) => {
   const status = (error as { status?: number })?.status
-  if (status === 401 || status === 403) {
+  // Only 401 means the session is invalid. A 403 is a permission error on a
+  // specific resource (e.g. a non-admin hitting /api/system-config) and must
+  // not destroy the session.
+  if (status === 401) {
     pb.authStore.clear()
     window.location.href = "/login"
   }

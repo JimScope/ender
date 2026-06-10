@@ -88,7 +88,9 @@ const AddApiKey = ({ open, onOpenChange }: AddApiKeyProps) => {
 
   const getQrPayload = (apiKey: string) => {
     const payload = {
-      server_instance: import.meta.env.VITE_API_URL,
+      // VITE_API_URL is undefined in production builds (frontend embedded in
+      // the backend) — fall back to the origin serving the app.
+      server_instance: import.meta.env.VITE_API_URL || window.location.origin,
       api_key: apiKey,
       version: QR_PAYLOAD_VERSION,
     }

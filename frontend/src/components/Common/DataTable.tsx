@@ -13,6 +13,7 @@ import {
   ChevronRightIcon,
   ChevronsLeft,
   ChevronsRight,
+  TriangleAlert,
 } from "lucide-react"
 import { useState } from "react"
 import { useTranslation } from "react-i18next"
@@ -44,6 +45,12 @@ interface DataTableProps<TData, TValue> {
   columns: ColumnDef<TData, TValue>[]
   data: TData[]
   caption?: string
+  /** Total records on the server. List hooks only download the first page;
+   * when this exceeds loadedCount a truncation notice is shown. */
+  totalCount?: number
+  /** Rows actually downloaded. Defaults to data.length — pass it explicitly
+   * when `data` is filtered client-side. */
+  loadedCount?: number
 }
 
 function generatePaginationItems(
@@ -87,9 +94,14 @@ export function DataTable<TData, TValue>({
   columns,
   data,
   caption,
+  totalCount,
+  loadedCount,
 }: DataTableProps<TData, TValue>) {
   const { t } = useTranslation()
   const [sorting, setSorting] = useState<SortingState>([])
+
+  const loaded = loadedCount ?? data.length
+  const isTruncated = totalCount !== undefined && totalCount > loaded
 
   const table = useReactTable({
     data,
@@ -107,6 +119,15 @@ export function DataTable<TData, TValue>({
 
   return (
     <div className="flex flex-col gap-4">
+      {isTruncated && (
+        <p
+          className="flex items-center gap-2 text-sm text-muted-foreground"
+          role="status"
+        >
+          <TriangleAlert className="size-4 shrink-0 text-amber-500" />
+          {t("common.truncatedNotice", { loaded, total: totalCount })}
+        </p>
+      )}
       <Table aria-label={caption}>
         <TableHeader>
           {table.getHeaderGroups().map((headerGroup) => (

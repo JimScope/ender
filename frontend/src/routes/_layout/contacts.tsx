@@ -22,7 +22,7 @@ import {
 } from "@/components/ui/select"
 import useAppConfig from "@/hooks/useAppConfig"
 import { useContactGroupList } from "@/hooks/useContactGroupList"
-import { useContactList, useContactListSuspense } from "@/hooks/useContactList"
+import { useContactListSuspense } from "@/hooks/useContactList"
 import type { Contact, ContactGroup } from "@/types/collections"
 
 export const Route = createFileRoute("/_layout/contacts")({
@@ -86,6 +86,8 @@ function ContactsTableContent({
       columns={columns}
       data={filteredContacts}
       caption={t("contacts.title")}
+      totalCount={contacts?.count}
+      loadedCount={allContacts.length}
     />
   )
 }
@@ -119,10 +121,8 @@ function Contacts() {
   const [search, setSearch] = useState("")
   const [groupFilter, setGroupFilter] = useState("")
   const { data: groups } = useContactGroupList()
-  const { data: contacts } = useContactList()
 
   const groupList = (groups?.data ?? []) as unknown as ContactGroup[]
-  const allContacts = (contacts?.data ?? []) as unknown as Contact[]
 
   return (
     <div className="flex flex-col gap-6">
@@ -133,7 +133,7 @@ function Contacts() {
           <p className="text-muted-foreground">{t("contacts.description")}</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <ExportContacts contacts={allContacts} groups={groupList} />
+          <ExportContacts groups={groupList} />
           <ImportContacts />
           <ManageGroups />
           <AddGroup />

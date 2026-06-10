@@ -54,6 +54,7 @@ function ApiKeysTableContent({ onAddApiKey }: { onAddApiKey: () => void }) {
       columns={columns}
       data={(apiKeys?.data ?? []) as unknown as ApiKey[]}
       caption={t("apiKeys.title")}
+      totalCount={apiKeys?.count}
     />
   )
 }

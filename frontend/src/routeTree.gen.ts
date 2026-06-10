@@ -21,7 +21,6 @@ import { Route as LayoutRouteImport } from './routes/_layout'
 import { Route as LayoutIndexRouteImport } from './routes/_layout/index'
 import { Route as SubscriptionSuccessRouteImport } from './routes/subscription.success'
 import { Route as SubscriptionErrorRouteImport } from './routes/subscription.error'
-import { Route as OauthCallbackProviderRouteImport } from './routes/oauth-callback.$provider'
 import { Route as LayoutWebhooksRouteImport } from './routes/_layout/webhooks'
 import { Route as LayoutTemplatesRouteImport } from './routes/_layout/templates'
 import { Route as LayoutSmsRouteImport } from './routes/_layout/sms'
@@ -90,11 +89,6 @@ const SubscriptionSuccessRoute = SubscriptionSuccessRouteImport.update({
 const SubscriptionErrorRoute = SubscriptionErrorRouteImport.update({
   id: '/subscription/error',
   path: '/subscription/error',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const OauthCallbackProviderRoute = OauthCallbackProviderRouteImport.update({
-  id: '/oauth-callback/$provider',
-  path: '/oauth-callback/$provider',
   getParentRoute: () => rootRouteImport,
 } as any)
 const LayoutWebhooksRoute = LayoutWebhooksRouteImport.update({
@@ -168,7 +162,6 @@ export interface FileRoutesByFullPath {
   '/sms': typeof LayoutSmsRoute
   '/templates': typeof LayoutTemplatesRoute
   '/webhooks': typeof LayoutWebhooksRoute
-  '/oauth-callback/$provider': typeof OauthCallbackProviderRoute
   '/subscription/error': typeof SubscriptionErrorRoute
   '/subscription/success': typeof SubscriptionSuccessRoute
 }
@@ -191,7 +184,6 @@ export interface FileRoutesByTo {
   '/sms': typeof LayoutSmsRoute
   '/templates': typeof LayoutTemplatesRoute
   '/webhooks': typeof LayoutWebhooksRoute
-  '/oauth-callback/$provider': typeof OauthCallbackProviderRoute
   '/subscription/error': typeof SubscriptionErrorRoute
   '/subscription/success': typeof SubscriptionSuccessRoute
   '/': typeof LayoutIndexRoute
@@ -217,7 +209,6 @@ export interface FileRoutesById {
   '/_layout/sms': typeof LayoutSmsRoute
   '/_layout/templates': typeof LayoutTemplatesRoute
   '/_layout/webhooks': typeof LayoutWebhooksRoute
-  '/oauth-callback/$provider': typeof OauthCallbackProviderRoute
   '/subscription/error': typeof SubscriptionErrorRoute
   '/subscription/success': typeof SubscriptionSuccessRoute
   '/_layout/': typeof LayoutIndexRoute
@@ -244,7 +235,6 @@ export interface FileRouteTypes {
     | '/sms'
     | '/templates'
     | '/webhooks'
-    | '/oauth-callback/$provider'
     | '/subscription/error'
     | '/subscription/success'
   fileRoutesByTo: FileRoutesByTo
@@ -267,7 +257,6 @@ export interface FileRouteTypes {
     | '/sms'
     | '/templates'
     | '/webhooks'
-    | '/oauth-callback/$provider'
     | '/subscription/error'
     | '/subscription/success'
     | '/'
@@ -292,7 +281,6 @@ export interface FileRouteTypes {
     | '/_layout/sms'
     | '/_layout/templates'
     | '/_layout/webhooks'
-    | '/oauth-callback/$provider'
     | '/subscription/error'
     | '/subscription/success'
     | '/_layout/'
@@ -308,7 +296,6 @@ export interface RootRouteChildren {
   SignupRoute: typeof SignupRoute
   TermsRoute: typeof TermsRoute
   VerifyEmailRoute: typeof VerifyEmailRoute
-  OauthCallbackProviderRoute: typeof OauthCallbackProviderRoute
   SubscriptionErrorRoute: typeof SubscriptionErrorRoute
   SubscriptionSuccessRoute: typeof SubscriptionSuccessRoute
 }
@@ -397,13 +384,6 @@ declare module '@tanstack/react-router' {
       path: '/subscription/error'
       fullPath: '/subscription/error'
       preLoaderRoute: typeof SubscriptionErrorRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/oauth-callback/$provider': {
-      id: '/oauth-callback/$provider'
-      path: '/oauth-callback/$provider'
-      fullPath: '/oauth-callback/$provider'
-      preLoaderRoute: typeof OauthCallbackProviderRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/_layout/webhooks': {
@@ -520,7 +500,6 @@ const rootRouteChildren: RootRouteChildren = {
   SignupRoute: SignupRoute,
   TermsRoute: TermsRoute,
   VerifyEmailRoute: VerifyEmailRoute,
-  OauthCallbackProviderRoute: OauthCallbackProviderRoute,
   SubscriptionErrorRoute: SubscriptionErrorRoute,
   SubscriptionSuccessRoute: SubscriptionSuccessRoute,
 }

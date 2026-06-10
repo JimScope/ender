@@ -38,7 +38,12 @@ function SMSTableContent({ messageType }: { messageType: SMSMessageType }) {
     )
   }
 
-  return <SMSTable data={sms.data as unknown as SMSMessage[]} />
+  return (
+    <SMSTable
+      data={sms.data as unknown as SMSMessage[]}
+      totalCount={sms.count}
+    />
+  )
 }
 
 function Sms() {

@@ -53,8 +53,10 @@ function UserSettings() {
   const { user: currentUser } = useAuth()
   const { tab } = Route.useSearch()
   const navigate = useNavigate()
+  // Superusers must not see the danger zone (deleting the only admin would
+  // brick the instance) — drop the last tab for them.
   const finalTabs = currentUser?.is_superuser
-    ? tabsConfig.slice(0, 4)
+    ? tabsConfig.slice(0, 3)
     : tabsConfig
 
   const activeTab = finalTabs.some((tb) => tb.value === tab)

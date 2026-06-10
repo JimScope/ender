@@ -1,4 +1,5 @@
 import { Download, FileSpreadsheet, FileText } from "lucide-react"
+import { useState } from "react"
 import { useTranslation } from "react-i18next"
 
 import { Button } from "@/components/ui/button"
@@ -8,11 +9,21 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
+import useCustomToast from "@/hooks/useCustomToast"
+import pb from "@/lib/pocketbase"
 import type { Contact, ContactGroup } from "@/types/collections"
 
 interface ExportContactsProps {
-  contacts: Contact[]
   groups: ContactGroup[]
+}
+
+// The list view only downloads the first page of contacts; exports must
+// cover every record, so they pull the full list on demand.
+async function fetchAllContacts(): Promise<Contact[]> {
+  const items = await pb.collection("contacts").getFullList({
+    sort: "-created",
+  })
+  return items as unknown as Contact[]
 }
 
 function downloadFile(content: string, filename: string, mimeType: string) {
@@ -73,23 +84,41 @@ function exportVCard(contacts: Contact[]) {
   downloadFile(vcf, "contacts.vcf", "text/vcard;charset=utf-8")
 }
 
-const ExportContacts = ({ contacts, groups }: ExportContactsProps) => {
+const ExportContacts = ({ groups }: ExportContactsProps) => {
   const { t } = useTranslation()
+  const { showErrorToast } = useCustomToast()
+  const [isExporting, setIsExporting] = useState(false)
+
+  const handleExport = async (format: "csv" | "vcard") => {
+    setIsExporting(true)
+    try {
+      const contacts = await fetchAllContacts()
+      if (format === "csv") {
+        exportCSV(contacts, groups)
+      } else {
+        exportVCard(contacts)
+      }
+    } catch {
+      showErrorToast(t("contacts.exportFailed"))
+    } finally {
+      setIsExporting(false)
+    }
+  }
 
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button variant="outline">
+        <Button variant="outline" disabled={isExporting}>
           <Download className="size-4" />
           {t("contacts.export")}
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end">
-        <DropdownMenuItem onClick={() => exportCSV(contacts, groups)}>
+        <DropdownMenuItem onClick={() => handleExport("csv")}>
           <FileSpreadsheet />
           {t("contacts.exportCSV")}
         </DropdownMenuItem>
-        <DropdownMenuItem onClick={() => exportVCard(contacts)}>
+        <DropdownMenuItem onClick={() => handleExport("vcard")}>
           <FileText />
           {t("contacts.exportVCard")}
         </DropdownMenuItem>

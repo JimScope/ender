@@ -38,6 +38,7 @@ function WebhooksTableContent() {
       columns={columns}
       data={(webhooks?.data ?? []) as unknown as WebhookConfig[]}
       caption={t("webhooks.title")}
+      totalCount={webhooks?.count}
     />
   )
 }

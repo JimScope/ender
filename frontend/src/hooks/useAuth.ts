@@ -40,6 +40,9 @@ const useAuth = () => {
       }
     },
     enabled: isLoggedIn(),
+    // useAuth mounts in many components — without staleTime each navigation
+    // fires a redundant authRefresh request.
+    staleTime: 5 * 60 * 1000,
     retry: (failureCount, error: any) => {
       // Don't retry auth errors (401), only transient/network failures
       if (error?.status === 401) return false

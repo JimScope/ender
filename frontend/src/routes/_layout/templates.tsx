@@ -40,6 +40,7 @@ function TemplatesTableContent() {
       columns={columns}
       data={(templates?.data ?? []) as unknown as SMSTemplate[]}
       caption={t("templates.title")}
+      totalCount={templates?.count}
     />
   )
 }

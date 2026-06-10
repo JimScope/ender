@@ -107,13 +107,17 @@ function UpgradePlanDialog({ currentPlan }: UpgradePlanDialogProps) {
       { plan_id: selectedPlanId, billing_cycle: "monthly" },
       {
         onSuccess: (data) => {
+          queryClient.invalidateQueries({ queryKey: ["quota"] })
+          queryClient.invalidateQueries({ queryKey: ["balance"] })
           if (data.status.includes("active")) {
-            queryClient.invalidateQueries({ queryKey: ["quota"] })
-            queryClient.invalidateQueries({ queryKey: ["balance"] })
             showSuccessToast(t("plans.planActivated"))
-            setIsOpen(false)
-            setSelectedPlanId(null)
+          } else {
+            // The backend returns "pending" when the subscription awaits
+            // payment confirmation — give feedback instead of staying silent.
+            showSuccessToast(t("plans.planPending"))
           }
+          setIsOpen(false)
+          setSelectedPlanId(null)
         },
         onError: (error) => {
           showErrorToast(error instanceof Error ? error.message : String(error))
