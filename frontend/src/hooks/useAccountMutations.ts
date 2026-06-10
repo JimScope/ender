@@ -22,10 +22,25 @@ export function useUpdateProfile() {
     mutationFn: async (data: ProfileUpdate) => {
       const userId = pb.authStore.record?.id
       if (!userId) throw new Error("Not authenticated")
-      return await pb.collection("users").update(userId, data)
+
+      const { email, ...fields } = data
+      if (Object.keys(fields).length > 0) {
+        await pb.collection("users").update(userId, fields)
+      }
+      // An auth record can't change its own email through a direct update —
+      // PocketBase requires the requestEmailChange confirmation flow.
+      if (email && email !== pb.authStore.record?.email) {
+        await pb.collection("users").requestEmailChange(email)
+        return { emailChangeRequested: true }
+      }
+      return { emailChangeRequested: false }
     },
-    onSuccess: () => {
-      showSuccessToast("User updated successfully")
+    onSuccess: ({ emailChangeRequested }) => {
+      if (emailChangeRequested) {
+        showSuccessToast("Confirmation link sent to the new email address")
+      } else {
+        showSuccessToast("User updated successfully")
+      }
     },
     onError: (error: Error) => {
       showErrorToast(error.message || "Failed to update profile")

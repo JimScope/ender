@@ -40,6 +40,7 @@ function ScheduledTableContent() {
       columns={columns}
       data={(scheduled?.data ?? []) as unknown as ScheduledSMS[]}
       caption={t("scheduled.title")}
+      totalCount={scheduled?.count}
     />
   )
 }

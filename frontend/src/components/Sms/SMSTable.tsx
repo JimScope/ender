@@ -6,9 +6,12 @@ import { getColumns } from "./columns"
 
 interface SMSTableProps {
   data: SMSMessage[]
+  /** Total messages on the server — shows a truncation notice when more
+   * exist than were downloaded. */
+  totalCount?: number
 }
 
-export function SMSTable({ data }: SMSTableProps) {
+export function SMSTable({ data, totalCount }: SMSTableProps) {
   const { t } = useTranslation()
   const columns = useMemo(() => getColumns(t), [t])
 
@@ -25,6 +28,7 @@ export function SMSTable({ data }: SMSTableProps) {
       columns={columns}
       data={sortedData}
       caption={t("sms.smsMessages")}
+      totalCount={totalCount}
     />
   )
 }

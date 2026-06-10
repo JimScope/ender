@@ -10,6 +10,7 @@ export function useRealtimeQuery(collection: string, queryKeys: string[][]) {
   useEffect(() => {
     if (!pb.authStore.isValid) return
 
+    let disposed = false
     let unsubFn: (() => Promise<void>) | null = null
 
     pb.collection(collection)
@@ -19,11 +20,23 @@ export function useRealtimeQuery(collection: string, queryKeys: string[][]) {
         }
       })
       .then((fn) => {
-        unsubFn = fn
+        // The component may unmount before subscribe() resolves (guaranteed
+        // in dev with StrictMode) — drop the subscription right away instead
+        // of leaking it.
+        if (disposed) {
+          fn().catch(() => {})
+        } else {
+          unsubFn = fn
+        }
+      })
+      .catch(() => {
+        // Subscription failed (e.g. auth expired mid-flight) — nothing to
+        // clean up; queries still work via regular fetching.
       })
 
     return () => {
-      unsubFn?.()
+      disposed = true
+      unsubFn?.().catch(() => {})
     }
   }, [collection, queryClient])
 }

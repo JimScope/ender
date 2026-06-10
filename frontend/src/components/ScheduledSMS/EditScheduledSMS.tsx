@@ -115,21 +115,24 @@ const EditScheduledSMS = ({ schedule, onSuccess }: EditScheduledSMSProps) => {
   const updateScheduledSMSMutation = useUpdateScheduledSMS(schedule.id)
 
   const onSubmit = (data: FormData) => {
+    // Cleared fields must be sent as "" — the SDK omits undefined keys from
+    // the PATCH, which would leave stale values from the previous schedule
+    // type (or make a device impossible to unassign).
     updateScheduledSMSMutation.mutate(
       {
         name: data.name,
         recipients: data.recipients,
         body: data.body,
-        device_id: data.device_id?.[0] || undefined,
+        device_id: data.device_id?.[0] || "",
         schedule_type: data.schedule_type,
         scheduled_at:
           data.schedule_type === "one_time" && data.scheduled_at
             ? naiveDatetimeToUTC(data.scheduled_at, data.timezone)
-            : undefined,
+            : "",
         cron_expression:
           data.schedule_type === "recurring"
-            ? (data.cron_expression ?? undefined)
-            : undefined,
+            ? (data.cron_expression ?? "")
+            : "",
         timezone: data.timezone,
       },
       {

@@ -1,4 +1,4 @@
-import { createFileRoute } from "@tanstack/react-router"
+import { createFileRoute, redirect } from "@tanstack/react-router"
 import { Settings, Users } from "lucide-react"
 import { Suspense, useMemo, useState } from "react"
 import { useTranslation } from "react-i18next"
@@ -11,9 +11,17 @@ import PendingUsers from "@/components/Pending/PendingUsers"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import useAuth from "@/hooks/useAuth"
 import { useUserListSuspense } from "@/hooks/useUserList"
+import pb from "@/lib/pocketbase"
 
 export const Route = createFileRoute("/_layout/admin")({
   component: Admin,
+  // Data is already protected server-side; this guard keeps non-superusers
+  // from landing on an error-filled page via direct URL.
+  beforeLoad: () => {
+    if (!pb.authStore.record?.is_superuser) {
+      throw redirect({ to: "/" })
+    }
+  },
   head: () => ({
     meta: [
       {
@@ -36,7 +44,12 @@ function UsersTableContent() {
   })) as unknown as UserTableData[]
 
   return (
-    <DataTable columns={columns} data={tableData} caption={t("admin.users")} />
+    <DataTable
+      columns={columns}
+      data={tableData}
+      caption={t("admin.users")}
+      totalCount={users?.count}
+    />
   )
 }
 

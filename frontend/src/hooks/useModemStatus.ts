@@ -1,24 +1,38 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query"
-import { useEffect, useRef } from "react"
+import { useEffect } from "react"
 import pb from "@/lib/pocketbase"
 
 export function useModemStatus() {
   const queryClient = useQueryClient()
-  const unsubRef = useRef<(() => Promise<void>) | null>(null)
 
   useEffect(() => {
     if (!pb.authStore.isValid) return
+
+    let disposed = false
+    let unsubFn: (() => Promise<void>) | null = null
 
     pb.realtime
       .subscribe("modem-status", (data) => {
         queryClient.setQueryData(["modem-status"], data)
       })
       .then((unsub) => {
-        unsubRef.current = unsub
+        // The component may unmount before subscribe() resolves (guaranteed
+        // in dev with StrictMode) — drop the subscription right away instead
+        // of leaking it.
+        if (disposed) {
+          unsub().catch(() => {})
+        } else {
+          unsubFn = unsub
+        }
+      })
+      .catch(() => {
+        // Subscription failed (e.g. auth expired mid-flight) — nothing to
+        // clean up; the query just keeps its last known data.
       })
 
     return () => {
-      unsubRef.current?.()
+      disposed = true
+      unsubFn?.().catch(() => {})
     }
   }, [queryClient])
 
