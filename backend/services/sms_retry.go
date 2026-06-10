@@ -12,6 +12,9 @@ import (
 )
 
 // isPermanentFailure returns true for errors that should not be retried.
+// "provider delivery failure" covers terminal delivery events reported by an
+// external provider (e.g. AEUM via SNS): the provider already exhausted its
+// own retries, so re-dispatching would only bill another SMS.
 func isPermanentFailure(errMsg string) bool {
 	permanent := []string{
 		"invalid number",
@@ -19,6 +22,7 @@ func isPermanentFailure(errMsg string) bool {
 		"unsubscribed",
 		"blacklisted",
 		"not a valid phone",
+		"provider delivery failure",
 	}
 	lower := strings.ToLower(errMsg)
 	for _, p := range permanent {

@@ -52,10 +52,15 @@ func RegisterRealtimeHooks(app *pocketbase.PocketBase) {
 			if apiKey == "" {
 				return fmt.Errorf("authentication required for modem subscriptions")
 			}
-			_, err := e.App.FindFirstRecordByFilter(
+			// Match the hashed api_key (with legacy plaintext fallback) via the
+			// same helper the device-auth middleware uses, so a future hashing
+			// change can never desync these two call sites again.
+			_, err := services.FindByAPIKey(
+				e.App,
 				"sms_devices",
 				"id = {:id} && api_key = {:key}",
-				dbx.Params{"id": deviceId, "key": apiKey},
+				apiKey,
+				dbx.Params{"id": deviceId},
 			)
 			if err != nil {
 				return fmt.Errorf("unauthorized modem subscription")

@@ -102,10 +102,12 @@ func RegisterContactRoutes(se *core.ServeEvent) {
 		if search := strings.TrimSpace(e.Request.URL.Query().Get("search")); search != "" {
 			filter += " && (name ~ {:search} || phone_number ~ {:search})"
 			params["search"] = search
-			pattern := "%" + search + "%"
+			// dbx.Like escapes %/_/\ and adds an ESCAPE clause, mirroring the
+			// listing query's `~` operator — so total_items can't diverge from
+			// the returned rows when a name contains a LIKE wildcard.
 			countExprs = append(countExprs, dbx.Or(
-				dbx.NewExp("[[name]] LIKE {:search}", dbx.Params{"search": pattern}),
-				dbx.NewExp("[[phone_number]] LIKE {:search}", dbx.Params{"search": pattern}),
+				dbx.Like("name", search),
+				dbx.Like("phone_number", search),
 			))
 		}
 

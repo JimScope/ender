@@ -2,11 +2,11 @@ package handlers
 
 import (
 	"encoding/json"
-	"vendel/services"
-	"vendel/services/payment"
 	"io"
 	"log/slog"
 	"net/http"
+	"vendel/services"
+	"vendel/services/payment"
 
 	"github.com/pocketbase/pocketbase/apis"
 	"github.com/pocketbase/pocketbase/core"
@@ -125,18 +125,13 @@ func processWebhookPayload(e *core.RequestEvent, providerName string, webhookReq
 		return apis.NewBadRequestError("Unrecognized webhook payload", nil)
 	}
 
-	// Idempotency: if the payment is already completed, return success without reprocessing
+	// Idempotency: if this provider transaction was already credited, return
+	// success without reprocessing.
 	if event.TransactionID != "" {
-		existing, _ := services.FindPaymentByTransactionID(e.App, event.TransactionID)
-		if existing != nil && existing.GetString("status") == "completed" {
-			sub, _ := e.App.FindRecordById("subscriptions", existing.GetString("subscription"))
-			subId := ""
-			if sub != nil {
-				subId = sub.Id
-			}
+		existing, _ := services.FindProcessedTransaction(e.App, event.TransactionID)
+		if existing != nil {
 			return e.JSON(http.StatusOK, map[string]any{
-				"status":          "already_processed",
-				"subscription_id": subId,
+				"status": "already_processed",
 			})
 		}
 	}

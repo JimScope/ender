@@ -160,6 +160,23 @@ func ProcessPaymentCredit(app core.App, userId, txHash string, amount float64) (
 	return creditAndActivate(app, userId, txHash, amount, "USD")
 }
 
+// paymentIdempotencyCollection records which external provider transactions
+// have already been credited. It is decoupled from the payments collection
+// (whose subscription relation is Required and absent for balance/deposit
+// credits) so recording a marker never fails validation. See migration
+// 1740000023.
+const paymentIdempotencyCollection = "payment_idempotency"
+
+// FindProcessedTransaction returns the idempotency marker for a provider
+// transaction id, or nil if that transaction has not been credited yet.
+func FindProcessedTransaction(app core.App, transactionID string) (*core.Record, error) {
+	return app.FindFirstRecordByFilter(
+		paymentIdempotencyCollection,
+		"provider_transaction_id = {:txId}",
+		dbx.Params{"txId": transactionID},
+	)
+}
+
 // creditAndActivate is the shared logic for all deposit/payment flows:
 // credit balance, then auto-activate a pending/past_due subscription if sufficient.
 func creditAndActivate(app core.App, userId, txHash string, amount float64, asset string) (map[string]any, error) {
@@ -172,7 +189,7 @@ func creditAndActivate(app core.App, userId, txHash string, amount float64, asse
 	// starts after the first commits and sees its payment marker.
 	err := app.RunInTransaction(func(txApp core.App) error {
 		if txHash != "" {
-			existing, _ := FindPaymentByTransactionID(txApp, txHash)
+			existing, _ := FindProcessedTransaction(txApp, txHash)
 			if existing != nil {
 				alreadyProcessed = true
 				return nil
@@ -185,20 +202,21 @@ func creditAndActivate(app core.App, userId, txHash string, amount float64, asse
 			return creditErr
 		}
 
-		// Record the credit as a payment for idempotency tracking
+		// Record the credit so a replayed webhook is a no-op. Lives in a
+		// dedicated collection (no Required subscription) so the marker save
+		// can never roll back the credit it is meant to protect.
 		if txHash != "" {
-			collection, err := txApp.FindCollectionByNameOrId("payments")
+			collection, err := txApp.FindCollectionByNameOrId(paymentIdempotencyCollection)
 			if err != nil {
-				return fmt.Errorf("payments collection not found: %w", err)
+				return fmt.Errorf("payment_idempotency collection not found: %w", err)
 			}
-			record := core.NewRecord(collection)
-			record.Set("amount", amount)
-			record.Set("currency", asset)
-			record.Set("provider", "")
-			record.Set("provider_transaction_id", txHash)
-			record.Set("status", "completed")
-			if err := txApp.Save(record); err != nil {
-				return fmt.Errorf("failed to record payment marker: %w", err)
+			marker := core.NewRecord(collection)
+			marker.Set("provider_transaction_id", txHash)
+			marker.Set("amount", amount)
+			marker.Set("currency", asset)
+			marker.Set("provider", "")
+			if err := txApp.Save(marker); err != nil {
+				return fmt.Errorf("failed to record payment idempotency marker: %w", err)
 			}
 		}
 		return nil

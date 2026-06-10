@@ -6,28 +6,16 @@ import (
 	"time"
 	"vendel/services"
 
-	"github.com/pocketbase/dbx"
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/pocketbase/pocketbase/tools/routine"
 	"github.com/pocketbase/pocketbase/tools/types"
 )
 
-// lookupByAPIKey finds a record whose key field matches the SHA-256 hash of
-// the presented key. Falls back to a plaintext comparison for keys created
-// before the hashing migration, logging a warning so the gap is visible.
+// lookupByAPIKey finds a record by the hash of the presented key, delegating to
+// services.FindByAPIKey (shared with the realtime subscription guard) so the
+// hash-with-plaintext-fallback logic lives in exactly one place.
 func lookupByAPIKey(app core.App, collection, filter, rawKey string) (*core.Record, error) {
-	record, err := app.FindFirstRecordByFilter(collection, filter, dbx.Params{"key": services.HashAPIKey(rawKey)})
-	if err == nil {
-		return record, nil
-	}
-
-	record, err = app.FindFirstRecordByFilter(collection, filter, dbx.Params{"key": rawKey})
-	if err != nil {
-		return nil, err
-	}
-	app.Logger().Warn("matched legacy plaintext API key — hashing migration may not have run",
-		slog.String("collection", collection))
-	return record, nil
+	return services.FindByAPIKey(app, collection, filter, rawKey, nil)
 }
 
 // AuthenticateDevice validates the X-API-Key header against sms_devices.

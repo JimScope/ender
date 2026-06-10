@@ -92,7 +92,7 @@ func ClaimPendingMessages(app core.App, deviceId string) ([]*core.Record, error)
 	records, err := app.FindRecordsByFilter(
 		"sms_messages",
 		"device = {:deviceId} && status = 'assigned' && message_type = 'outgoing'",
-		"-created", 50, 0,
+		"-created", SMSClaimBatchSize, 0,
 		dbx.Params{"deviceId": deviceId},
 	)
 	if err != nil {
