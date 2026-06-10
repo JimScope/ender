@@ -175,6 +175,11 @@ func createMessageRecords(
 		batchId = core.GenerateDefaultRandomId()
 	}
 
+	// Build and validate every record before persisting any of them. A
+	// per-recipient failure (e.g. an over-length interpolated body) must abort
+	// before the first Save, otherwise the caller refunds the full reservation
+	// while the already-saved rows stay dispatch-eligible — undercounting quota
+	// and orphaning real sends.
 	messages := make([]*core.Record, 0, len(recipients))
 	for i, recipient := range recipients {
 		// Determine message body for this recipient
@@ -206,10 +211,21 @@ func createMessageRecords(
 			record.Set("status", "pending")
 		}
 
-		if err := app.Save(record); err != nil {
-			return nil, fmt.Errorf("failed to create message: %w", err)
-		}
 		messages = append(messages, record)
+	}
+
+	// Persist atomically: a mid-batch Save failure rolls back the whole batch,
+	// so we never leave dispatch-eligible rows behind while the caller refunds
+	// the full quota reservation.
+	if err := app.RunInTransaction(func(txApp core.App) error {
+		for _, record := range messages {
+			if err := txApp.Save(record); err != nil {
+				return fmt.Errorf("failed to create message: %w", err)
+			}
+		}
+		return nil
+	}); err != nil {
+		return nil, err
 	}
 
 	return messages, nil

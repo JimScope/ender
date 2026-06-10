@@ -9,9 +9,11 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"strings"
 
+	"github.com/pocketbase/dbx"
 	"github.com/pocketbase/pocketbase/core"
 
 	"github.com/pocketbase/pocketbase/tools/security"
@@ -130,6 +132,33 @@ const APIKeyHashPrefix = "sha256:"
 func HashAPIKey(raw string) string {
 	sum := sha256.Sum256([]byte(raw))
 	return APIKeyHashPrefix + hex.EncodeToString(sum[:])
+}
+
+// FindByAPIKey looks up a record whose key field matches the SHA-256 hash of
+// rawKey, falling back to a plaintext comparison for keys created before the
+// hashing migration (logging a warning so the gap stays visible). The filter
+// must contain a {:key} placeholder; any other placeholders are supplied via
+// extra. Centralising this here keeps every API-key consumer — device auth,
+// integration auth, and the realtime subscription guard — in lockstep.
+func FindByAPIKey(app core.App, collection, filter, rawKey string, extra dbx.Params) (*core.Record, error) {
+	params := dbx.Params{}
+	for k, v := range extra {
+		params[k] = v
+	}
+
+	params["key"] = HashAPIKey(rawKey)
+	if record, err := app.FindFirstRecordByFilter(collection, filter, params); err == nil {
+		return record, nil
+	}
+
+	params["key"] = rawKey
+	record, err := app.FindFirstRecordByFilter(collection, filter, params)
+	if err != nil {
+		return nil, err
+	}
+	app.Logger().Warn("matched legacy plaintext API key — hashing migration may not have run",
+		slog.String("collection", collection))
+	return record, nil
 }
 
 // GenerateKeyPrefix returns the first KeyPrefixDisplay characters of a key followed by "...".

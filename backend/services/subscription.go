@@ -228,15 +228,6 @@ func calculateBilling(plan *core.Record, cycle string) (amount float64, periodDa
 	return amount, 365
 }
 
-// FindPaymentByTransactionID looks up a payment record by provider_transaction_id.
-func FindPaymentByTransactionID(app core.App, transactionID string) (*core.Record, error) {
-	return app.FindFirstRecordByFilter(
-		"payments",
-		"provider_transaction_id = {:txId}",
-		dbx.Params{"txId": transactionID},
-	)
-}
-
 func findSubscriptionByUser(app core.App, userId string) (*core.Record, error) {
 	return app.FindFirstRecordByFilter(
 		"subscriptions",

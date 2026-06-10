@@ -152,7 +152,16 @@ func handleAEUMNotification(e *core.RequestEvent, snsMsg *smsprovider.SNSMessage
 		msg.Set("provider_channel", ch)
 	}
 
-	if err := services.MarkMessageTerminal(e.App, msg, newStatus, ""); err != nil {
+	// Provider-reported delivery failures are terminal — AEUM already exhausted
+	// its own retries before emitting the event. Tag them with a recognizable
+	// error_message so the retry cron (isPermanentFailure) treats them as
+	// permanent and never re-sends a new billable SMS to an invalid/blocked
+	// number. A successful delivery carries no error.
+	deliveryErr := ""
+	if newStatus == smsprovider.StatusFailed {
+		deliveryErr = "provider delivery failure: " + ev.EventType
+	}
+	if err := services.MarkMessageTerminal(e.App, msg, newStatus, deliveryErr); err != nil {
 		e.App.Logger().Error("update message from AEUM event failed", "err", err, "messageId", ev.MessageID)
 		return apis.NewApiError(http.StatusInternalServerError, "internal update failed", err)
 	}

@@ -24,7 +24,7 @@ const (
 const (
 	MinPasswordLength      = 10
 	AuthTokenDurationSecs  = 86400 // 24 hours
-	DefaultAPIKeyExpiryYrs = 1 // years from creation
+	DefaultAPIKeyExpiryYrs = 1     // years from creation
 )
 
 // ── Webhook Delivery ────────────────────────────────────────────────
@@ -61,6 +61,14 @@ const (
 	// minute, so anything still "sending" after this window belongs to an
 	// agent that died mid-batch and must be re-queued.
 	SMSSendingStaleAfter = 10 * time.Minute
+
+	// SMSClaimBatchSize caps how many "assigned" messages an agent flips to
+	// "sending" in one /api/sms/pending call. Kept small enough that even a
+	// slow modem (multipart / rate-limited link) drains a full claim well
+	// within SMSSendingStaleAfter, so rescueStaleSendingMessages never
+	// re-queues a batch a healthy-but-slow agent is still working through —
+	// which would duplicate sends. The agent simply claims again next poll.
+	SMSClaimBatchSize = 20
 )
 
 var SMSRetryBackoffs = []time.Duration{
