@@ -4,17 +4,54 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/xlab/at"
 )
 
+// lockedProfile serializes every AT exchange on the command port with a
+// mutex. The xlab/at library has no internal locking, and on dual-port
+// modems Watch() issues CMGR/CMGD (via d.Commands) concurrently with our
+// CMGS sends — interleaved AT exchanges corrupt each other's replies.
+// Overriding the command methods here covers both callers without forking
+// the library, because Device.handleReport dispatches through d.Commands.
+type lockedProfile struct {
+	at.DefaultProfile
+	mu *sync.Mutex
+}
+
+func (p *lockedProfile) CMGR(index uint16) ([]byte, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.DefaultProfile.CMGR(index)
+}
+
+func (p *lockedProfile) CMGD(index uint16, option at.Opt) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.DefaultProfile.CMGD(index, option)
+}
+
+func (p *lockedProfile) CMGS(length int, octets []byte) (byte, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.DefaultProfile.CMGS(length, octets)
+}
+
+func (p *lockedProfile) BOOT(token uint64) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.DefaultProfile.BOOT(token)
+}
+
 // GenericProfile works with any modem that supports standard 3GPP AT commands.
 // It skips Huawei-specific init (AT^SYSINFO, AT+COPS format, AT+GMM, AT+GSN)
 // and optionally unlocks the SIM with a PIN.
 type GenericProfile struct {
-	at.DefaultProfile
-	simPIN string
+	lockedProfile
+	simPIN     string
+	singlePort bool
 }
 
 func (p *GenericProfile) Init(d *at.Device) error {
@@ -39,6 +76,17 @@ func (p *GenericProfile) Init(d *at.Device) error {
 	if err := p.CPMS(at.MemoryTypes.NvRAM, at.MemoryTypes.NvRAM, at.MemoryTypes.NvRAM); err != nil {
 		return fmt.Errorf("at init: unable to set messages storage: %w", err)
 	}
+
+	if p.singlePort {
+		// Single-port modems run no Watch() loop: nobody reads unsolicited
+		// +CMTI/+CLIP lines, and they would corrupt command replies on the
+		// shared port. Keep notifications off entirely.
+		if err := p.CNMI(0, 0, 0, 0, 0); err != nil {
+			return fmt.Errorf("at init: unable to turn off message notifications: %w", err)
+		}
+		return p.FetchInbox()
+	}
+
 	if err := p.CNMI(1, 1, 0, 0, 0); err != nil {
 		return fmt.Errorf("at init: unable to turn on message notifications: %w", err)
 	}
@@ -52,15 +100,16 @@ func (p *GenericProfile) Init(d *at.Device) error {
 // Huawei-specific no-ops — these are called by handleReport (via Watch)
 // but have no meaning on generic modems.
 func (p *GenericProfile) SYSINFO() (*at.SystemInfoReport, error) { return nil, nil }
-func (p *GenericProfile) BOOT(token uint64) error               { return nil }
+func (p *GenericProfile) BOOT(token uint64) error                { return nil }
 func (p *GenericProfile) SYSCFG(roaming, cellular bool) error    { return nil }
 func (p *GenericProfile) COPS(auto bool, text bool) error        { return nil }
 
 // HuaweiProfile extends DefaultProfile with SIM PIN support.
 // After optional PIN unlock it delegates to the full Huawei init (AT^SYSINFO, etc.).
 type HuaweiProfile struct {
-	at.DefaultProfile
-	simPIN string
+	lockedProfile
+	simPIN     string
+	singlePort bool
 }
 
 func (p *HuaweiProfile) Init(d *at.Device) error {
@@ -72,7 +121,17 @@ func (p *HuaweiProfile) Init(d *at.Device) error {
 		}
 		time.Sleep(2 * time.Second)
 	}
-	return p.DefaultProfile.Init(d)
+	if err := p.DefaultProfile.Init(d); err != nil {
+		return err
+	}
+	if p.singlePort {
+		// Same rationale as GenericProfile: without Watch() nobody consumes
+		// unsolicited reports, so silence them after the vendor init.
+		if err := p.CNMI(0, 0, 0, 0, 0); err != nil {
+			return fmt.Errorf("at init: unable to turn off message notifications: %w", err)
+		}
+	}
+	return nil
 }
 
 // probeProfile is a minimal profile used only for modem detection.
@@ -88,12 +147,13 @@ func (p *probeProfile) Init(d *at.Device) error {
 }
 
 // resolveProfile returns the appropriate DeviceProfile for the given name.
-func resolveProfile(name, simPIN string) at.DeviceProfile {
+// All profiles share the per-modem command-port mutex.
+func resolveProfile(name, simPIN string, singlePort bool, mu *sync.Mutex) at.DeviceProfile {
 	switch name {
 	case "huawei-e173":
-		return &HuaweiProfile{simPIN: simPIN}
+		return &HuaweiProfile{lockedProfile: lockedProfile{mu: mu}, simPIN: simPIN, singlePort: singlePort}
 	default:
-		return &GenericProfile{simPIN: simPIN}
+		return &GenericProfile{lockedProfile: lockedProfile{mu: mu}, simPIN: simPIN, singlePort: singlePort}
 	}
 }
 

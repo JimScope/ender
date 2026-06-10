@@ -1,8 +1,11 @@
+# Copy to modems.yaml and restrict access — it contains device API keys:
+#   chmod 600 modems.yaml
+
 vendel_url: http://localhost:8090
 
 modems:
   - api_key: "dk_your_device_api_key"
     command_port: /dev/ttyUSB0
-    notify_port: /dev/ttyUSB1
+    notify_port: /dev/ttyUSB1   # omit for single-port modems
     # sim_pin: "1234"
     # profile: huawei-e173    # auto-detected if omitted
