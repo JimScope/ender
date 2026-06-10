@@ -133,7 +133,11 @@ function Contacts() {
           <p className="text-muted-foreground">{t("contacts.description")}</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <ExportContacts groups={groupList} />
+          <ExportContacts
+            groups={groupList}
+            search={search}
+            groupFilter={groupFilter === "all" ? "" : groupFilter}
+          />
           <ImportContacts />
           <ManageGroups />
           <AddGroup />
