@@ -26,6 +26,9 @@ func RegisterDeviceListRoutes(se *core.ServeEvent) {
 
 		filter := "user = {:userId}"
 		params := dbx.Params{"userId": userId}
+		// CountRecords takes raw SQL expressions, not PocketBase filter
+		// syntax — build both in parallel so total_items stays accurate.
+		countExprs := []dbx.Expression{dbx.HashExp{"user": userId}}
 
 		// device_type acts as a coarse filter; the collection has no
 		// dedicated `status` field, but we accept the param for forward
@@ -33,6 +36,7 @@ func RegisterDeviceListRoutes(se *core.ServeEvent) {
 		if deviceType := strings.TrimSpace(e.Request.URL.Query().Get("device_type")); deviceType != "" {
 			filter += " && device_type = {:deviceType}"
 			params["deviceType"] = deviceType
+			countExprs = append(countExprs, dbx.HashExp{"device_type": deviceType})
 		}
 
 		records, err := e.App.FindRecordsByFilter(
@@ -47,7 +51,10 @@ func RegisterDeviceListRoutes(se *core.ServeEvent) {
 			records = []*core.Record{}
 		}
 
-		totalItems, _ := e.App.CountRecords("sms_devices", dbx.NewExp(filter, params))
+		totalItems, err := e.App.CountRecords("sms_devices", countExprs...)
+		if err != nil {
+			return apis.NewApiError(http.StatusInternalServerError, "Failed to count devices", nil)
+		}
 		totalPages := int(totalItems) / perPage
 		if int(totalItems)%perPage != 0 {
 			totalPages++

@@ -116,16 +116,29 @@ func RegisterPlanRoutes(se *core.ServeEvent) {
 			return apis.NewApiError(http.StatusInternalServerError, "Provider error: "+err.Error(), nil)
 		}
 
-		// For TronDealer, persist wallet info
+		// For TronDealer, the deposit webhook matches users by wallet address,
+		// so the address we display MUST be the one persisted. Reuse the
+		// registered wallet on subsequent top-ups; persist the new one (with
+		// error handling) only on first assignment.
 		if provider.Name() == "trondealer" {
-			bal, _ := services.GetOrCreateBalance(e.App, userId)
-			if bal != nil && bal.GetString("wallet_address") == "" {
-				_ = services.SetWalletInfo(e.App, userId, result.PaymentURL, result.InvoiceID)
+			bal, err := services.GetOrCreateBalance(e.App, userId)
+			if err != nil {
+				return apis.NewApiError(http.StatusInternalServerError, "Failed to load balance record", nil)
+			}
+
+			walletAddress := bal.GetString("wallet_address")
+			if walletAddress == "" {
+				walletAddress = result.PaymentURL
+				if err := services.SetWalletInfo(e.App, userId, walletAddress, result.InvoiceID); err != nil {
+					// Showing an unregistered wallet would send deposits into
+					// the void — fail loudly instead.
+					return apis.NewApiError(http.StatusInternalServerError, "Failed to register deposit wallet", nil)
+				}
 			}
 
 			return e.JSON(http.StatusOK, map[string]any{
 				"provider":       provider.Name(),
-				"wallet_address": result.PaymentURL,
+				"wallet_address": walletAddress,
 			})
 		}
 

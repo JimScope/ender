@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -34,8 +35,8 @@ func (p *StripeProvider) CreateInvoice(req InvoiceRequest) (*InvoiceResult, erro
 		return nil, fmt.Errorf("Stripe is not configured")
 	}
 
-	// Amount in cents
-	amountCents := int64(req.Amount * 100)
+	// Amount in cents — round instead of truncate (19.99*100 = 1998.9999…)
+	amountCents := int64(math.Round(req.Amount * 100))
 
 	params := url.Values{}
 	params.Set("mode", "payment")

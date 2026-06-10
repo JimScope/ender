@@ -18,6 +18,10 @@ func StartSubscription(
 	app core.App,
 	userId, planId, billingCycle string,
 ) (*core.Record, error) {
+	if billingCycle != "monthly" && billingCycle != "yearly" {
+		return nil, fmt.Errorf("invalid billing cycle %q: must be 'monthly' or 'yearly'", billingCycle)
+	}
+
 	existing, _ := findSubscriptionByUser(app, userId)
 	if existing != nil {
 		switch existing.GetString("status") {
@@ -45,8 +49,11 @@ func StartSubscription(
 	now := time.Now().UTC()
 	periodEnd := now.Add(time.Duration(periodDays) * 24 * time.Hour)
 
-	// Free plan — activate immediately
+	// Free plan — activate immediately (replacing any expired/canceled subscription)
 	if amount <= 0 {
+		if existing != nil {
+			_ = app.Delete(existing)
+		}
 		sub, err := createSubscriptionRecord(app, userId, planId, billingCycle, "active", now, periodEnd)
 		if err != nil {
 			return nil, err
@@ -116,9 +123,11 @@ func CancelSubscription(app core.App, userId string, immediate bool) (*core.Reco
 	return sub, nil
 }
 
-// CheckRenewals processes balance-based renewals for all active subscriptions due.
+// CheckRenewals processes balance-based renewals for all active subscriptions
+// due, finalizes end-of-period cancellations, and downgrades subscriptions
+// stuck in past_due beyond the grace period.
 func CheckRenewals(app core.App) error {
-	now := time.Now().UTC().Format(time.RFC3339)
+	now := FilterNow()
 
 	subs, err := app.FindRecordsByFilter(
 		"subscriptions",
@@ -136,8 +145,74 @@ func CheckRenewals(app core.App) error {
 		}
 	}
 
+	finalizePeriodEndCancellations(app, now)
+	downgradeExpiredPastDue(app)
+
 	app.Logger().Info("Processed subscription renewals", slog.Int("count", len(subs)))
 	return nil
+}
+
+// finalizePeriodEndCancellations cancels subscriptions whose period elapsed
+// with cancel_at_period_end set, downgrading the user to the free plan.
+func finalizePeriodEndCancellations(app core.App, now string) {
+	subs, err := app.FindRecordsByFilter(
+		"subscriptions",
+		"status = 'active' && cancel_at_period_end = true && current_period_end <= {:now}",
+		"", 0, 0,
+		dbx.Params{"now": now},
+	)
+	if err != nil {
+		app.Logger().Warn("failed to query period-end cancellations", slog.Any("error", err))
+		return
+	}
+
+	for _, sub := range subs {
+		sub.Set("status", "canceled")
+		if err := app.Save(sub); err != nil {
+			app.Logger().Warn("failed to cancel subscription at period end",
+				slog.String("subscription", sub.Id), slog.Any("error", err))
+			continue
+		}
+		if err := downgradeToFreePlan(app, sub.GetString("user")); err != nil {
+			app.Logger().Warn("failed to downgrade after period-end cancellation",
+				slog.String("subscription", sub.Id), slog.Any("error", err))
+		}
+	}
+}
+
+// pastDueGracePeriod is how long a subscription may remain past_due (counted
+// from the missed current_period_end) before the user is downgraded to the
+// free plan. Within the grace period the subscription reactivates
+// automatically when the user tops up enough balance (see creditAndActivate).
+const pastDueGracePeriod = 7 * 24 * time.Hour
+
+// downgradeExpiredPastDue cancels past_due subscriptions whose grace period
+// has elapsed without payment, downgrading the user to the free plan.
+func downgradeExpiredPastDue(app core.App) {
+	cutoff := FilterTime(time.Now().UTC().Add(-pastDueGracePeriod))
+	subs, err := app.FindRecordsByFilter(
+		"subscriptions",
+		"status = 'past_due' && current_period_end <= {:cutoff}",
+		"", 0, 0,
+		dbx.Params{"cutoff": cutoff},
+	)
+	if err != nil {
+		app.Logger().Warn("failed to query expired past_due subscriptions", slog.Any("error", err))
+		return
+	}
+
+	for _, sub := range subs {
+		sub.Set("status", "canceled")
+		if err := app.Save(sub); err != nil {
+			app.Logger().Warn("failed to cancel expired past_due subscription",
+				slog.String("subscription", sub.Id), slog.Any("error", err))
+			continue
+		}
+		if err := downgradeToFreePlan(app, sub.GetString("user")); err != nil {
+			app.Logger().Warn("failed to downgrade expired past_due subscription",
+				slog.String("subscription", sub.Id), slog.Any("error", err))
+		}
+	}
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────

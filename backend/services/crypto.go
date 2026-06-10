@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"os"
@@ -119,6 +120,18 @@ func GenerateSecureKey(prefix string, length int) string {
 	return prefix + security.RandomString(length)
 }
 
+// APIKeyHashPrefix marks API key values stored as SHA-256 digests.
+const APIKeyHashPrefix = "sha256:"
+
+// HashAPIKey returns the storage representation of an API key: a SHA-256
+// digest, hex-encoded and prefixed so hashed values are distinguishable from
+// legacy plaintext keys. Lookups hash the presented key and compare digests,
+// so a database dump never exposes usable bearer credentials.
+func HashAPIKey(raw string) string {
+	sum := sha256.Sum256([]byte(raw))
+	return APIKeyHashPrefix + hex.EncodeToString(sum[:])
+}
+
 // GenerateKeyPrefix returns the first KeyPrefixDisplay characters of a key followed by "...".
 func GenerateKeyPrefix(key string) string {
 	if len(key) <= KeyPrefixDisplay {
@@ -146,28 +159,36 @@ func RotateAPIKey(app core.App, userId, keyId, expiresAt string) (*RotateAPIKeyR
 		return nil, fmt.Errorf("cannot rotate a revoked key")
 	}
 
-	// Deactivate old key
-	oldKey.Set("is_active", false)
-	if err := app.Save(oldKey); err != nil {
-		return nil, fmt.Errorf("failed to deactivate old key: %w", err)
-	}
+	// Deactivate + create atomically so a failure cannot leave the user with
+	// the old key revoked and no replacement issued.
+	var newKey *core.Record
+	err = app.RunInTransaction(func(txApp core.App) error {
+		oldKey.Set("is_active", false)
+		if err := txApp.Save(oldKey); err != nil {
+			return fmt.Errorf("failed to deactivate old key: %w", err)
+		}
 
-	// Create new key (the OnRecordCreate hook generates the actual key value)
-	col, err := app.FindCollectionByNameOrId("api_keys")
+		// Create new key (the OnRecordCreate hook generates the actual key value)
+		col, err := txApp.FindCollectionByNameOrId("api_keys")
+		if err != nil {
+			return fmt.Errorf("api_keys collection not found: %w", err)
+		}
+
+		newKey = core.NewRecord(col)
+		newKey.Set("name", oldKey.GetString("name")+" (rotated)")
+		newKey.Set("user", userId)
+		newKey.Set("is_active", true)
+		if expiresAt != "" {
+			newKey.Set("expires_at", expiresAt)
+		}
+
+		if err := txApp.Save(newKey); err != nil {
+			return fmt.Errorf("failed to create new key: %w", err)
+		}
+		return nil
+	})
 	if err != nil {
-		return nil, fmt.Errorf("api_keys collection not found: %w", err)
-	}
-
-	newKey := core.NewRecord(col)
-	newKey.Set("name", oldKey.GetString("name")+" (rotated)")
-	newKey.Set("user", userId)
-	newKey.Set("is_active", true)
-	if expiresAt != "" {
-		newKey.Set("expires_at", expiresAt)
-	}
-
-	if err := app.Save(newKey); err != nil {
-		return nil, fmt.Errorf("failed to create new key: %w", err)
+		return nil, err
 	}
 
 	// Unhide key so the caller can read the raw value (shown once)

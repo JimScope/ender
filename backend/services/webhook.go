@@ -135,21 +135,17 @@ func (r *WebhookDeliveryResult) ToJSON() map[string]any {
 	return resp
 }
 
-// SendWebhookForMessage delivers a webhook HTTP POST for an SMS message.
-func SendWebhookForMessage(app core.App, webhook *core.Record, message *core.Record, event string) error {
-	if !webhook.GetBool("active") {
-		return fmt.Errorf("webhook inactive")
-	}
-
-	includeBody := webhook.GetBool("include_body")
-
+// buildMessagePayload constructs the webhook payload for an SMS message
+// event. Used both for the initial delivery and to regenerate the payload on
+// retries (the stored request_body is PII-redacted and must never be re-sent).
+func buildMessagePayload(webhook, message *core.Record, event string) map[string]any {
 	payload := map[string]any{
 		"event":      event,
 		"message_id": message.Id,
 		"timestamp":  message.GetString("created"),
 	}
 
-	if includeBody {
+	if webhook.GetBool("include_body") {
 		payload["body"] = GetRecordBody(message)
 	}
 
@@ -170,15 +166,19 @@ func SendWebhookForMessage(app core.App, webhook *core.Record, message *core.Rec
 		}
 	}
 
-	result := deliverWebhook(app, webhook, payload, event)
+	return payload
+}
 
-	// Mark message as webhook_sent on success
-	if result.DeliveryStatus == "success" {
-		message.Set("webhook_sent", true)
-		if err := app.Save(message); err != nil {
-			app.Logger().Warn("failed to update webhook_sent", slog.Any("error", err))
-		}
+// SendWebhookForMessage delivers a webhook HTTP POST for an SMS message.
+// It does not mutate message — marking webhook_sent is the caller's job
+// (core.Record is not safe for concurrent mutation).
+func SendWebhookForMessage(app core.App, webhook *core.Record, message *core.Record, event string) error {
+	if !webhook.GetBool("active") {
+		return fmt.Errorf("webhook inactive")
 	}
+
+	payload := buildMessagePayload(webhook, message, event)
+	result := deliverWebhook(app, webhook, payload, event)
 
 	if result.DeliveryStatus == "failed" {
 		return fmt.Errorf("webhook delivery failed: %s", result.ErrorMessage)
@@ -203,31 +203,50 @@ func SendTestWebhook(app core.App, webhook *core.Record) *WebhookDeliveryResult 
 	return deliverWebhook(app, webhook, payload, "test")
 }
 
-// deliverWebhook performs the HTTP request, measures timing, and logs the delivery.
-func deliverWebhook(app core.App, webhook *core.Record, payload map[string]any, event string) *WebhookDeliveryResult {
+// webhookHTTPResult holds the raw outcome of a single webhook HTTP attempt.
+type webhookHTTPResult struct {
+	ResponseStatus int
+	ResponseBody   string
+	DeliveryStatus string // "success" or "failed"
+	ErrorMessage   string
+	DurationMs     int
+}
+
+// executeWebhookRequest performs the signed HTTP POST and returns the raw
+// outcome WITHOUT writing any delivery log. Initial deliveries log via
+// deliverWebhook; retries update their existing log record instead of
+// spawning new ones (which previously caused exponential retry amplification).
+func executeWebhookRequest(app core.App, webhook *core.Record, payload map[string]any) *webhookHTTPResult {
 	url := webhook.GetString("url")
+	failed := func(errMsg string, durationMs int) *webhookHTTPResult {
+		return &webhookHTTPResult{DeliveryStatus: "failed", ErrorMessage: errMsg, DurationMs: durationMs}
+	}
 
 	// SSRF protection: validate URL before making any request
 	if err := ValidateWebhookURL(url); err != nil {
-		return logDelivery(app, webhook, event, url, payload, 0, "", "failed", fmt.Sprintf("blocked: %v", err), 0)
+		return failed(fmt.Sprintf("blocked: %v", err), 0)
 	}
 
 	payloadJSON, err := marshalSorted(payload)
 	if err != nil {
-		return logDelivery(app, webhook, event, url, payload, 0, "", "failed", fmt.Sprintf("marshal payload: %v", err), 0)
+		return failed(fmt.Sprintf("marshal payload: %v", err), 0)
 	}
 
 	headers := map[string]string{
 		"Content-Type": "application/json",
 	}
 
-	// HMAC-SHA256 signature if secret is configured
+	// HMAC-SHA256 signature if secret is configured. A decryption failure
+	// (e.g. rotated/lost WEBHOOK_ENCRYPTION_KEY) must fail loudly: signing
+	// with the raw ciphertext would silently break signature verification
+	// on the receiver side.
 	secretKey := webhook.GetString("secret_key")
 	if secretKey != "" {
 		decrypted, err := DecryptSecret(secretKey)
 		if err != nil {
-			app.Logger().Warn("failed to decrypt webhook secret", slog.Any("error", err))
-			decrypted = secretKey // fallback to raw value
+			app.Logger().Error("webhook secret decryption failed — delivery aborted (check WEBHOOK_ENCRYPTION_KEY)",
+				slog.String("webhook", webhook.Id), slog.Any("error", err))
+			return failed("webhook secret decryption failed (check WEBHOOK_ENCRYPTION_KEY)", 0)
 		}
 		sig := generateHMAC(decrypted, string(payloadJSON))
 		headers["X-Webhook-Signature"] = sig
@@ -260,7 +279,7 @@ func deliverWebhook(app core.App, webhook *core.Record, payload map[string]any, 
 	}
 	req, err := http.NewRequest("POST", url, bytes.NewReader(payloadJSON))
 	if err != nil {
-		return logDelivery(app, webhook, event, url, payload, 0, "", "failed", fmt.Sprintf("create request: %v", err), 0)
+		return failed(fmt.Sprintf("create request: %v", err), 0)
 	}
 
 	for k, v := range headers {
@@ -272,7 +291,7 @@ func deliverWebhook(app core.App, webhook *core.Record, payload map[string]any, 
 	durationMs := int(time.Since(start).Milliseconds())
 
 	if err != nil {
-		return logDelivery(app, webhook, event, url, payload, 0, "", "failed", fmt.Sprintf("request failed: %v", err), durationMs)
+		return failed(fmt.Sprintf("request failed: %v", err), durationMs)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
@@ -282,14 +301,25 @@ func deliverWebhook(app core.App, webhook *core.Record, payload map[string]any, 
 		respBodyStr = respBodyStr[:WebhookResponseMaxChars]
 	}
 
-	status := "success"
-	errMsg := ""
+	result := &webhookHTTPResult{
+		ResponseStatus: resp.StatusCode,
+		ResponseBody:   respBodyStr,
+		DeliveryStatus: "success",
+		DurationMs:     durationMs,
+	}
 	if resp.StatusCode >= 400 {
-		status = "failed"
-		errMsg = fmt.Sprintf("HTTP %d", resp.StatusCode)
+		result.DeliveryStatus = "failed"
+		result.ErrorMessage = fmt.Sprintf("HTTP %d", resp.StatusCode)
 	}
 
-	return logDelivery(app, webhook, event, url, payload, resp.StatusCode, respBodyStr, status, errMsg, durationMs)
+	return result
+}
+
+// deliverWebhook performs the HTTP request, measures timing, and logs the delivery.
+func deliverWebhook(app core.App, webhook *core.Record, payload map[string]any, event string) *WebhookDeliveryResult {
+	res := executeWebhookRequest(app, webhook, payload)
+	return logDelivery(app, webhook, event, webhook.GetString("url"), payload,
+		res.ResponseStatus, res.ResponseBody, res.DeliveryStatus, res.ErrorMessage, res.DurationMs)
 }
 
 // logDelivery creates a webhook_delivery_logs record and returns the result.
@@ -318,8 +348,9 @@ func logDelivery(app core.App, webhook *core.Record, event, url string, payload 
 	record.Set("error_message", errMsg)
 	record.Set("duration_ms", durationMs)
 
-	// Schedule first retry for initial failed deliveries
-	if deliveryStatus == "failed" {
+	// Schedule first retry for initial failed deliveries.
+	// Manual test deliveries are never auto-retried.
+	if deliveryStatus == "failed" && event != "test" {
 		record.Set("retry_count", 0)
 		nextRetry := time.Now().UTC().Add(webhookRetryBackoffs[0])
 		record.Set("next_retry_at", nextRetry.Format(time.RFC3339))
@@ -433,6 +464,9 @@ func webhookHost(rawURL string) string {
 }
 
 // TriggerWebhooks finds active webhook configs for a user and fires matching webhooks.
+// Deliveries run in a single background goroutine over a freshly fetched copy
+// of the message: core.Record is not safe for concurrent mutation, and the
+// caller may still hold (or save) its own instance.
 func TriggerWebhooks(app core.App, userId string, message *core.Record, event string) {
 	webhooks, err := app.FindRecordsByFilter(
 		"webhook_configs",
@@ -444,33 +478,52 @@ func TriggerWebhooks(app core.App, userId string, message *core.Record, event st
 		return
 	}
 
+	matching := make([]*core.Record, 0, len(webhooks))
 	for _, wh := range webhooks {
-		events := wh.GetString("events")
-		if containsEvent(events, event) {
-			wh := wh // capture loop variable for closure
+		if containsEvent(wh.GetString("events"), event) {
+			matching = append(matching, wh)
+		}
+	}
+	if len(matching) == 0 {
+		return
+	}
+
+	messageId := message.Id
+	routine.FireAndForget(func() {
+		// Re-fetch so this goroutine owns its record exclusively. Callers
+		// save the message before triggering, so the fresh copy is current.
+		msg, err := app.FindRecordById("sms_messages", messageId)
+		if err != nil {
+			app.Logger().Warn("webhook trigger: message not found",
+				slog.String("message", messageId), slog.Any("error", err))
+			return
+		}
+
+		anySuccess := false
+		for _, wh := range matching {
 			host := webhookHost(wh.GetString("url"))
-			// Allow runs synchronously here, but Record* happens inside a
-			// FireAndForget goroutine. Between the gate and the result, the
-			// breaker can race: a probe-true response transitions open→halfOpen,
-			// and if the goroutine stalls beyond cooldown, the half-open probe
-			// timeout (see Allow) re-arms and admits a second probe. Two probes
-			// in flight is rare and bounded; preferred over the prior failure
-			// mode of permanent half-open lock when a probe vanishes (panic).
 			if !webhookBreaker.Allow(host) {
 				app.Logger().Debug("webhook circuit breaker open, skipping delivery",
 					slog.String("event", event), slog.String("host", host))
 				continue
 			}
-			routine.FireAndForget(func() {
-				if err := SendWebhookForMessage(app, wh, message, event); err != nil {
-					webhookBreaker.RecordFailure(host)
-					app.Logger().Warn("webhook delivery failed", slog.Any("error", err))
-				} else {
-					webhookBreaker.RecordSuccess(host)
-				}
-			})
+			if err := SendWebhookForMessage(app, wh, msg, event); err != nil {
+				webhookBreaker.RecordFailure(host)
+				app.Logger().Warn("webhook delivery failed", slog.Any("error", err))
+			} else {
+				webhookBreaker.RecordSuccess(host)
+				anySuccess = true
+			}
 		}
-	}
+
+		// Mark webhook_sent once after the fan-out instead of per delivery.
+		if anySuccess {
+			msg.Set("webhook_sent", true)
+			if err := app.Save(msg); err != nil {
+				app.Logger().Warn("failed to update webhook_sent", slog.Any("error", err))
+			}
+		}
+	})
 }
 
 // containsEvent checks if a JSON array string contains a specific event.
@@ -512,9 +565,35 @@ func parseStoredPayload(raw any) (map[string]any, error) {
 	}
 }
 
+// rebuildPayloadFromLog reconstructs the real delivery payload for a retry.
+// The stored request_body is PII-redacted for display (body "[redacted]",
+// masked phone numbers) and must never be re-delivered, so the payload is
+// regenerated from the original message record instead.
+func rebuildPayloadFromLog(app core.App, webhook, logRecord *core.Record) (map[string]any, error) {
+	stored, err := parseStoredPayload(logRecord.Get("request_body"))
+	if err != nil {
+		return nil, err
+	}
+
+	messageId, _ := stored["message_id"].(string)
+	if messageId == "" {
+		return nil, fmt.Errorf("stored payload has no message_id")
+	}
+
+	message, err := app.FindRecordById("sms_messages", messageId)
+	if err != nil {
+		return nil, fmt.Errorf("message %s no longer exists: %w", messageId, err)
+	}
+
+	return buildMessagePayload(webhook, message, logRecord.GetString("event")), nil
+}
+
 // RetryFailedWebhooks retries failed webhook deliveries with exponential backoff.
+// Each retry updates the existing delivery log in place — it must NOT create
+// new failed log records, or every failure would re-enter the retry queue and
+// amplify deliveries exponentially.
 func RetryFailedWebhooks(app core.App) error {
-	now := time.Now().UTC().Format(time.RFC3339)
+	now := FilterNow()
 
 	records, err := app.FindRecordsByFilter(
 		"webhook_delivery_logs",
@@ -551,17 +630,15 @@ func RetryFailedWebhooks(app core.App) error {
 			continue
 		}
 
-		// Reconstruct payload from stored request_body
-		payload, err := parseStoredPayload(record.Get("request_body"))
+		payload, err := rebuildPayloadFromLog(app, webhook, record)
 		if err != nil {
-			app.Logger().Warn("failed to parse stored request_body", slog.Any("error", err))
+			app.Logger().Warn("cannot rebuild webhook payload for retry", slog.Any("error", err))
 			record.Set("next_retry_at", "")
 			_ = app.Save(record)
 			continue
 		}
 
-		event := record.GetString("event")
-		result := deliverWebhook(app, webhook, payload, event)
+		result := executeWebhookRequest(app, webhook, payload)
 
 		retryCount := record.GetInt("retry_count") + 1
 		record.Set("retry_count", retryCount)
@@ -617,10 +694,11 @@ func RetryWebhookDelivery(app core.App, logId string) (*WebhookDeliveryResult, e
 		return nil, fmt.Errorf("webhook config not found")
 	}
 
-	// Parse stored payload
-	payload, err := parseStoredPayload(record.Get("request_body"))
+	// Regenerate the payload from the original message — the stored
+	// request_body is PII-redacted and must never be re-delivered.
+	payload, err := rebuildPayloadFromLog(app, webhook, record)
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse stored request_body")
+		return nil, fmt.Errorf("cannot rebuild webhook payload: %v", err)
 	}
 
 	event := record.GetString("event")

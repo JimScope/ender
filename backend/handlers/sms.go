@@ -268,7 +268,7 @@ func handleMessageStatus(e *core.RequestEvent) error {
 	return e.JSON(http.StatusOK, map[string]any{
 		"id":            record.Id,
 		"batch_id":      record.GetString("batch_id"),
-		"recipient":     record.GetString("recipient"),
+		"recipient":     record.GetString("to"),
 		"status":        record.GetString("status"),
 		"error_message": record.GetString("error_message"),
 		"device_id":     record.GetString("device"),
@@ -302,7 +302,7 @@ func handleBatchStatus(e *core.RequestEvent) error {
 		counts[status]++
 		items[i] = map[string]any{
 			"id":            m.Id,
-			"recipient":     m.GetString("recipient"),
+			"recipient":     m.GetString("to"),
 			"status":        status,
 			"error_message": m.GetString("error_message"),
 			"created":       m.GetDateTime("created"),
@@ -332,27 +332,34 @@ func handleListMessages(e *core.RequestEvent) error {
 
 	filter := "user = {:userId}"
 	params := dbx.Params{"userId": userId}
+	// CountRecords takes raw SQL expressions, not PocketBase filter syntax —
+	// build both in parallel so total_items matches the filtered listing.
+	countExprs := []dbx.Expression{dbx.HashExp{"user": userId}}
 
 	q := e.Request.URL.Query()
 
 	if status := strings.TrimSpace(q.Get("status")); status != "" {
 		filter += " && status = {:status}"
 		params["status"] = status
+		countExprs = append(countExprs, dbx.HashExp{"status": status})
 	}
 
 	if deviceID := strings.TrimSpace(q.Get("device_id")); deviceID != "" {
 		filter += " && device = {:deviceId}"
 		params["deviceId"] = deviceID
+		countExprs = append(countExprs, dbx.HashExp{"device": deviceID})
 	}
 
 	if batchID := strings.TrimSpace(q.Get("batch_id")); batchID != "" {
 		filter += " && batch_id = {:batchId}"
 		params["batchId"] = batchID
+		countExprs = append(countExprs, dbx.HashExp{"batch_id": batchID})
 	}
 
 	if recipient := strings.TrimSpace(q.Get("recipient")); recipient != "" {
 		filter += " && to = {:recipient}"
 		params["recipient"] = recipient
+		countExprs = append(countExprs, dbx.HashExp{"to": recipient})
 	}
 
 	if from := strings.TrimSpace(q.Get("from")); from != "" {
@@ -360,8 +367,10 @@ func handleListMessages(e *core.RequestEvent) error {
 		if err != nil {
 			return apis.NewBadRequestError("Invalid 'from' timestamp; expected ISO8601 (RFC3339)", nil)
 		}
+		fromDate := t.UTC().Format("2006-01-02 15:04:05.000Z")
 		filter += " && created >= {:fromDate}"
-		params["fromDate"] = t.UTC().Format("2006-01-02 15:04:05.000Z")
+		params["fromDate"] = fromDate
+		countExprs = append(countExprs, dbx.NewExp("[[created]] >= {:fromDate}", dbx.Params{"fromDate": fromDate}))
 	}
 
 	if to := strings.TrimSpace(q.Get("to")); to != "" {
@@ -369,8 +378,10 @@ func handleListMessages(e *core.RequestEvent) error {
 		if err != nil {
 			return apis.NewBadRequestError("Invalid 'to' timestamp; expected ISO8601 (RFC3339)", nil)
 		}
+		toDate := t.UTC().Format("2006-01-02 15:04:05.000Z")
 		filter += " && created <= {:toDate}"
-		params["toDate"] = t.UTC().Format("2006-01-02 15:04:05.000Z")
+		params["toDate"] = toDate
+		countExprs = append(countExprs, dbx.NewExp("[[created]] <= {:toDate}", dbx.Params{"toDate": toDate}))
 	}
 
 	records, err := e.App.FindRecordsByFilter(
@@ -385,7 +396,10 @@ func handleListMessages(e *core.RequestEvent) error {
 		records = []*core.Record{}
 	}
 
-	totalItems, _ := e.App.CountRecords("sms_messages", dbx.NewExp(filter, params))
+	totalItems, err := e.App.CountRecords("sms_messages", countExprs...)
+	if err != nil {
+		return apis.NewApiError(http.StatusInternalServerError, "Failed to count messages", nil)
+	}
 	totalPages := int(totalItems) / perPage
 	if int(totalItems)%perPage != 0 {
 		totalPages++

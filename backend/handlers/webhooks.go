@@ -111,7 +111,10 @@ func handlePaymentWebhook(e *core.RequestEvent, providerName string) error {
 }
 
 func processWebhookPayload(e *core.RequestEvent, providerName string, webhookReq payment.WebhookRequest) error {
-	provider := payment.GetProvider(providerName)
+	// Resolve with system_config fallback so providers configured via the
+	// admin UI (not env vars) can verify signatures and parse callbacks too.
+	resolve := func(key string) string { return services.GetSystemConfigValue(e.App, key) }
+	provider := payment.GetProviderWithConfig(providerName, resolve)
 	if provider == nil {
 		return apis.NewBadRequestError("Unknown payment provider", nil)
 	}
