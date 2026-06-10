@@ -106,23 +106,35 @@ func VerifySNSSignature(msg *SNSMessage) error {
 	}
 }
 
-// validateCertURL enforces three guards before we even fetch the cert:
-// HTTPS scheme, .pem path suffix, and AWS-owned host. Any failure short-circuits
-// the verification so a malicious payload cannot trick us into fetching an
-// attacker-controlled certificate.
-func validateCertURL(raw string) error {
-	u, err := url.Parse(raw)
+// validateAWSSNSURL enforces that rawURL is HTTPS and points at an AWS SNS
+// host, returning the parsed URL on success. Both URLs this package ever
+// fetches — the signing cert and the subscription-confirmation endpoint — come
+// straight from the (attacker-reachable) SNS payload, so this guard is what
+// stops a forged payload from turning the public webhook into an SSRF primitive
+// against an attacker-chosen host.
+func validateAWSSNSURL(rawURL string) (*url.URL, error) {
+	u, err := url.Parse(rawURL)
 	if err != nil {
-		return fmt.Errorf("invalid SigningCertURL: %w", err)
+		return nil, fmt.Errorf("invalid SNS URL: %w", err)
 	}
 	if u.Scheme != "https" {
-		return errors.New("SigningCertURL must be HTTPS")
+		return nil, errors.New("SNS URL must be HTTPS")
+	}
+	if !awsSNSHostRe.MatchString(u.Host) {
+		return nil, fmt.Errorf("SNS URL host %q is not an AWS SNS endpoint", u.Host)
+	}
+	return u, nil
+}
+
+// validateCertURL adds the cert-specific .pem path requirement on top of the
+// shared AWS SNS host/scheme guard.
+func validateCertURL(raw string) error {
+	u, err := validateAWSSNSURL(raw)
+	if err != nil {
+		return err
 	}
 	if !strings.HasSuffix(u.Path, ".pem") {
 		return errors.New("SigningCertURL must end in .pem")
-	}
-	if !awsSNSHostRe.MatchString(u.Host) {
-		return fmt.Errorf("SigningCertURL host %q is not an AWS SNS endpoint", u.Host)
 	}
 	return nil
 }
@@ -138,6 +150,12 @@ func fetchCertPublicKey(certURL string) (*rsa.PublicKey, error) {
 		return cached.pub, nil
 	}
 
+	// Validate the host at the sink so this request can never reach an
+	// attacker-chosen host, independent of any upstream check (SSRF defense in
+	// depth — also the guard the static analyzer sees right before the GET).
+	if _, err := validateAWSSNSURL(certURL); err != nil {
+		return nil, err
+	}
 	resp, err := httpClient.Get(certURL)
 	if err != nil {
 		return nil, fmt.Errorf("download cert: %w", err)
@@ -229,6 +247,13 @@ func buildCanonicalString(msg *SNSMessage) (string, error) {
 // them; SNS will retry the SubscriptionConfirmation on the next delivery
 // attempt if we fail to confirm.
 func ConfirmSNSSubscription(subscribeURL string) error {
+	// SubscribeURL comes straight from the SNS payload. The payload signature
+	// already covers it upstream, but validating the host here too keeps this
+	// an AWS-SNS-only request even if call order ever changes — closing the
+	// SSRF sink at the source rather than relying on a prior step.
+	if _, err := validateAWSSNSURL(subscribeURL); err != nil {
+		return fmt.Errorf("refusing to confirm subscription: %w", err)
+	}
 	resp, err := httpClient.Get(subscribeURL)
 	if err != nil {
 		return fmt.Errorf("subscribe GET failed: %w", err)
