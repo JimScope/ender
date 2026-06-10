@@ -53,51 +53,62 @@ func RegisterPromoRoutes(se *core.ServeEvent) {
 			return apis.NewApiError(http.StatusGone, "This promo code has expired", nil)
 		}
 
-		// Validate: max redemptions not reached
+		// Validate: max redemptions not reached (re-checked inside the tx)
 		maxRedemptions := promo.GetInt("max_redemptions")
-		timesRedeemed := promo.GetInt("times_redeemed")
-		if maxRedemptions > 0 && timesRedeemed >= maxRedemptions {
+		if maxRedemptions > 0 && promo.GetInt("times_redeemed") >= maxRedemptions {
 			return apis.NewApiError(http.StatusGone, "This promo code has been fully redeemed", nil)
-		}
-
-		// Validate: user hasn't already redeemed this code
-		existing, _ := e.App.FindFirstRecordByFilter(
-			"promo_redemptions",
-			"user = {:userId} && promo_code = {:promoId}",
-			dbx.Params{"userId": userId, "promoId": promo.Id},
-		)
-		if existing != nil {
-			return apis.NewApiError(http.StatusConflict, "You have already redeemed this code", nil)
 		}
 
 		amount := promo.GetFloat("amount")
 
-		// Credit balance
-		newBalance, err := services.CreditBalance(e.App, userId, amount)
-		if err != nil {
-			return apis.NewApiError(http.StatusInternalServerError, "Failed to credit balance", nil)
-		}
+		// Check + credit + redemption record + counter share one transaction:
+		// PocketBase serializes write transactions, so concurrent redeems of
+		// the same code can neither double-credit one user nor exceed
+		// max_redemptions. A failure anywhere rolls everything back.
+		var newBalance float64
+		err = e.App.RunInTransaction(func(txApp core.App) error {
+			// Re-read the promo inside the tx so the counter check is current
+			txPromo, err := txApp.FindRecordById("promo_codes", promo.Id)
+			if err != nil {
+				return apis.NewApiError(http.StatusInternalServerError, "Internal error", nil)
+			}
+			timesRedeemed := txPromo.GetInt("times_redeemed")
+			if maxRedemptions > 0 && timesRedeemed >= maxRedemptions {
+				return apis.NewApiError(http.StatusGone, "This promo code has been fully redeemed", nil)
+			}
 
-		// Record redemption
-		redemptionCol, err := e.App.FindCollectionByNameOrId("promo_redemptions")
-		if err != nil {
-			return apis.NewApiError(http.StatusInternalServerError, "Internal error", nil)
-		}
-		redemption := core.NewRecord(redemptionCol)
-		redemption.Set("user", userId)
-		redemption.Set("promo_code", promo.Id)
-		redemption.Set("amount_credited", amount)
-		if err := e.App.Save(redemption); err != nil {
-			return apis.NewApiError(http.StatusInternalServerError, "Failed to record redemption", nil)
-		}
-
-		// Increment times_redeemed
-		promo.Set("times_redeemed", timesRedeemed+1)
-		if err := e.App.Save(promo); err != nil {
-			e.App.Logger().Warn("failed to increment promo redemption count",
-				slog.String("promo_id", promo.Id),
-				slog.Any("error", err),
+			// Validate: user hasn't already redeemed this code
+			existing, _ := txApp.FindFirstRecordByFilter(
+				"promo_redemptions",
+				"user = {:userId} && promo_code = {:promoId}",
+				dbx.Params{"userId": userId, "promoId": promo.Id},
 			)
+			if existing != nil {
+				return apis.NewApiError(http.StatusConflict, "You have already redeemed this code", nil)
+			}
+
+			newBalance, err = services.CreditBalance(txApp, userId, amount)
+			if err != nil {
+				return apis.NewApiError(http.StatusInternalServerError, "Failed to credit balance", nil)
+			}
+
+			redemptionCol, err := txApp.FindCollectionByNameOrId("promo_redemptions")
+			if err != nil {
+				return apis.NewApiError(http.StatusInternalServerError, "Internal error", nil)
+			}
+			redemption := core.NewRecord(redemptionCol)
+			redemption.Set("user", userId)
+			redemption.Set("promo_code", promo.Id)
+			redemption.Set("amount_credited", amount)
+			if err := txApp.Save(redemption); err != nil {
+				return apis.NewApiError(http.StatusInternalServerError, "Failed to record redemption", nil)
+			}
+
+			txPromo.Set("times_redeemed", timesRedeemed+1)
+			return txApp.Save(txPromo)
+		})
+		if err != nil {
+			return err
 		}
 
 		e.App.Logger().Info("promo code redeemed",

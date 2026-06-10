@@ -4,12 +4,31 @@ import (
 	"fmt"
 	"log/slog"
 	"time"
+	"vendel/services"
 
 	"github.com/pocketbase/dbx"
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/pocketbase/pocketbase/tools/routine"
 	"github.com/pocketbase/pocketbase/tools/types"
 )
+
+// lookupByAPIKey finds a record whose key field matches the SHA-256 hash of
+// the presented key. Falls back to a plaintext comparison for keys created
+// before the hashing migration, logging a warning so the gap is visible.
+func lookupByAPIKey(app core.App, collection, filter, rawKey string) (*core.Record, error) {
+	record, err := app.FindFirstRecordByFilter(collection, filter, dbx.Params{"key": services.HashAPIKey(rawKey)})
+	if err == nil {
+		return record, nil
+	}
+
+	record, err = app.FindFirstRecordByFilter(collection, filter, dbx.Params{"key": rawKey})
+	if err != nil {
+		return nil, err
+	}
+	app.Logger().Warn("matched legacy plaintext API key — hashing migration may not have run",
+		slog.String("collection", collection))
+	return record, nil
+}
 
 // AuthenticateDevice validates the X-API-Key header against sms_devices.
 // Returns the device record.
@@ -19,11 +38,7 @@ func AuthenticateDevice(e *core.RequestEvent) (*core.Record, error) {
 		return nil, fmt.Errorf("missing X-API-Key header")
 	}
 
-	record, err := e.App.FindFirstRecordByFilter(
-		"sms_devices",
-		"api_key = {:key}",
-		dbx.Params{"key": apiKey},
-	)
+	record, err := lookupByAPIKey(e.App, "sms_devices", "api_key = {:key}", apiKey)
 	if err != nil {
 		return nil, fmt.Errorf("invalid device API key")
 	}
@@ -39,11 +54,7 @@ func AuthenticateIntegrationAPIKey(e *core.RequestEvent) (string, error) {
 		return "", fmt.Errorf("missing X-API-Key header")
 	}
 
-	record, err := e.App.FindFirstRecordByFilter(
-		"api_keys",
-		"key = {:key} && is_active = true",
-		dbx.Params{"key": apiKey},
-	)
+	record, err := lookupByAPIKey(e.App, "api_keys", "key = {:key} && is_active = true", apiKey)
 	if err != nil {
 		return "", fmt.Errorf("invalid integration API key")
 	}

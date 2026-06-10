@@ -26,13 +26,15 @@ func SendSMS(app core.App, userId string, recipients []string, body string, devi
 		return nil, fmt.Errorf("no recipients provided")
 	}
 
-	if err := CheckSMSQuota(app, userId, len(recipients)); err != nil {
+	// Reserve quota up front (atomic check-and-increment); release on failure.
+	if err := ReserveSMSQuota(app, userId, len(recipients)); err != nil {
 		return nil, err
 	}
 
 	aeumProvider := smsprovider.DefaultAEUM()
 	devices, err := resolveDevices(app, userId, deviceId, aeumProvider)
 	if err != nil {
+		releaseQuota(app, userId, len(recipients))
 		return nil, err
 	}
 
@@ -44,33 +46,52 @@ func SendSMS(app core.App, userId string, recipients []string, body string, devi
 
 	messages, err := createMessageRecords(app, userId, recipients, body, devices, tmpl, contactMap)
 	if err != nil {
+		releaseQuota(app, userId, len(recipients))
 		return nil, err
 	}
 
-	if err := IncrementSMSCount(app, userId, len(recipients)); err != nil {
-		app.Logger().Warn("failed to increment SMS count", slog.Any("error", err))
-	}
-
 	if len(devices) > 0 {
-		physical, externalByType := partitionByProvider(app, messages)
-		if len(physical) > 0 {
-			routine.FireAndForget(func() { DispatchMessages(app, physical) })
-		}
-		for deviceType, msgs := range externalByType {
-			provider := smsprovider.Get(deviceType)
-			if provider == nil || len(msgs) == 0 {
-				continue
-			}
-			routine.FireAndForget(func() { DispatchProviderMessages(app, provider, msgs) })
-		}
+		dispatchOutgoing(app, messages)
 	}
 
 	return messages, nil
 }
 
+// releaseQuota refunds a failed reservation, logging instead of failing the
+// caller (the user-facing error is the one that triggered the refund).
+func releaseQuota(app core.App, userId string, count int) {
+	if err := ReleaseSMSQuota(app, userId, count); err != nil {
+		app.Logger().Warn("failed to release reserved SMS quota",
+			slog.String("user", userId), slog.Int("count", count), slog.Any("error", err))
+	}
+}
+
+// dispatchOutgoing fans out assigned messages to their transport: FCM tickle
+// for physical devices (modems are notified via the realtime SSE hook on
+// save) and provider dispatch for external providers (AEUM). Shared by the
+// initial send and the retry cron.
+func dispatchOutgoing(app core.App, messages []*core.Record) {
+	physical, externalByType := partitionByProvider(app, messages)
+	if len(physical) > 0 {
+		routine.FireAndForget(func() { DispatchMessages(app, physical) })
+	}
+	for deviceType, msgs := range externalByType {
+		provider := smsprovider.Get(deviceType)
+		if provider == nil || len(msgs) == 0 {
+			continue
+		}
+		routine.FireAndForget(func() { DispatchProviderMessages(app, provider, msgs) })
+	}
+}
+
 // resolveDevices returns the target device(s) for sending. When deviceId is
 // empty, physical devices (FCM/modem) take precedence over the global AEUM
 // fallback so user-owned hardware keeps working without changes.
+//
+// NOTE (intentional design): the AEUM device is a managed, instance-wide
+// service — it has no owner, so the per-user ownership check below does not
+// apply to it. Any authenticated user may send through it; spending is
+// bounded by the per-user SMS quota (ReserveSMSQuota), not by device ownership.
 func resolveDevices(app core.App, userId, deviceId string, aeumProvider smsprovider.Provider) ([]*core.Record, error) {
 	if deviceId != "" {
 		device, err := app.FindRecordById("sms_devices", deviceId)
@@ -257,12 +278,24 @@ func ProcessSMSAck(app core.App, deviceId string, messageId string, status strin
 	if record.GetString("device") != deviceId {
 		return fmt.Errorf("message does not belong to this device")
 	}
+
+	// State transition guards (mirrors the AEUM event handler): duplicate
+	// ACKs are idempotent no-ops so webhooks don't fire twice, and a
+	// delivered message can never regress to failed.
+	current := record.GetString("status")
+	if current == status {
+		return nil
+	}
+	if current == "delivered" {
+		return fmt.Errorf("message already delivered; cannot transition to %q", status)
+	}
+
 	return MarkMessageTerminal(app, record, status, errorMessage)
 }
 
 // HandleIncomingSMS processes an incoming SMS from a device and triggers webhooks.
 func HandleIncomingSMS(app core.App, userId string, deviceId string, fromNumber string, body string, timestamp string) (*core.Record, error) {
-	cutoff := time.Now().UTC().Add(-5 * time.Minute).Format(time.RFC3339)
+	cutoff := FilterTime(time.Now().UTC().Add(-5 * time.Minute))
 	bodyHash, _ := ComputeBodyHash(body)
 	existing, err := app.FindFirstRecordByFilter(
 		"sms_messages",

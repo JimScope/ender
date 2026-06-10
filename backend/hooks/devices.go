@@ -37,15 +37,19 @@ func RegisterDeviceHooks(app *pocketbase.PocketBase) {
 		if err := services.IncrementDeviceCount(e.App, userId); err != nil {
 			return err
 		}
-		e.Record.Set("api_key", services.GenerateSecureKey(services.DeviceKeyPrefix, services.GeneratedKeyLen))
+		rawKey := services.GenerateSecureKey(services.DeviceKeyPrefix, services.GeneratedKeyLen)
+		e.Record.Set("api_key", services.HashAPIKey(rawKey))
 		if e.Record.GetString("device_type") == "" {
 			e.Record.Set("device_type", "android")
 		}
-		e.Record.Unhide("api_key")
 		if err := e.Next(); err != nil {
 			_ = services.DecrementDeviceCount(e.App, userId)
 			return err
 		}
+		// The hash is now persisted. Expose the raw key in the create response
+		// (shown once); "api_key" is hidden by default so it must be unhidden.
+		e.Record.Set("api_key", rawKey)
+		e.Record.Unhide("api_key")
 		return nil
 	})
 

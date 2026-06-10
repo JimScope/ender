@@ -1,6 +1,7 @@
 package services
 
 import (
+	"log/slog"
 	"strings"
 	"vendel/services/payment"
 
@@ -9,6 +10,8 @@ import (
 )
 
 // GetSystemConfigValue reads a value from the system_config collection.
+// Values stored encrypted (enc: prefix) are transparently decrypted;
+// plaintext values pass through unchanged.
 func GetSystemConfigValue(app core.App, key string) string {
 	record, err := app.FindFirstRecordByFilter(
 		"system_config",
@@ -18,7 +21,14 @@ func GetSystemConfigValue(app core.App, key string) string {
 	if err != nil || record == nil {
 		return ""
 	}
-	return record.GetString("value")
+
+	value, err := DecryptSecret(record.GetString("value"))
+	if err != nil {
+		app.Logger().Error("failed to decrypt system_config value (check WEBHOOK_ENCRYPTION_KEY)",
+			slog.String("key", key), slog.Any("error", err))
+		return ""
+	}
+	return value
 }
 
 // GetAppSettings returns public app settings.

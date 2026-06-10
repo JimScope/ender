@@ -29,6 +29,14 @@ func RegisterContactRoutes(se *core.ServeEvent) {
 		defer file.Close()
 
 		groupId := e.Request.FormValue("group_id")
+		if groupId != "" {
+			// The group must belong to the importing user — otherwise contacts
+			// could be attached to another user's group.
+			group, err := e.App.FindRecordById("contact_groups", groupId)
+			if err != nil || group.GetString("user") != userId {
+				return apis.NewBadRequestError("Invalid group", nil)
+			}
+		}
 
 		contacts := parseVCard(file)
 		if len(contacts) == 0 {
@@ -87,15 +95,29 @@ func RegisterContactRoutes(se *core.ServeEvent) {
 
 		filter := "user = {:userId}"
 		params := dbx.Params{"userId": userId}
+		// The COUNT query takes raw SQL, not PocketBase filter syntax — build
+		// both in parallel so total_items matches the filtered listing.
+		countExprs := []dbx.Expression{dbx.HashExp{"user": userId}}
 
 		if search := strings.TrimSpace(e.Request.URL.Query().Get("search")); search != "" {
 			filter += " && (name ~ {:search} || phone_number ~ {:search})"
 			params["search"] = search
+			pattern := "%" + search + "%"
+			countExprs = append(countExprs, dbx.Or(
+				dbx.NewExp("[[name]] LIKE {:search}", dbx.Params{"search": pattern}),
+				dbx.NewExp("[[phone_number]] LIKE {:search}", dbx.Params{"search": pattern}),
+			))
 		}
 
 		if groupId := strings.TrimSpace(e.Request.URL.Query().Get("group_id")); groupId != "" {
 			filter += " && groups.id ?= {:groupId}"
 			params["groupId"] = groupId
+			// Multi-relation values are stored as a JSON array; mirror the
+			// `groups.id ?=` operator with a json_each EXISTS.
+			countExprs = append(countExprs, dbx.NewExp(
+				"EXISTS (SELECT 1 FROM json_each(CASE WHEN json_valid([[groups]]) THEN [[groups]] ELSE json_array([[groups]]) END) WHERE json_each.value = {:groupId})",
+				dbx.Params{"groupId": groupId},
+			))
 		}
 
 		records, err := e.App.FindRecordsByFilter(
@@ -110,7 +132,10 @@ func RegisterContactRoutes(se *core.ServeEvent) {
 			records = []*core.Record{}
 		}
 
-		totalItems, _ := e.App.CountRecords("contacts", dbx.NewExp(filter, params))
+		totalItems, err := e.App.CountRecords("contacts", countExprs...)
+		if err != nil {
+			return apis.NewApiError(http.StatusInternalServerError, "Failed to count contacts", nil)
+		}
 		totalPages := int(totalItems) / perPage
 		if int(totalItems)%perPage != 0 {
 			totalPages++
@@ -163,7 +188,10 @@ func RegisterContactRoutes(se *core.ServeEvent) {
 			records = []*core.Record{}
 		}
 
-		totalItems, _ := e.App.CountRecords("contact_groups", dbx.NewExp(filter, params))
+		totalItems, err := e.App.CountRecords("contact_groups", dbx.HashExp{"user": userId})
+		if err != nil {
+			return apis.NewApiError(http.StatusInternalServerError, "Failed to count groups", nil)
+		}
 		totalPages := int(totalItems) / perPage
 		if int(totalItems)%perPage != 0 {
 			totalPages++

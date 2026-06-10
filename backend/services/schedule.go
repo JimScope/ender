@@ -13,7 +13,7 @@ import (
 
 // ProcessDueSchedules finds and dispatches all scheduled SMS that are due.
 func ProcessDueSchedules(app core.App) error {
-	now := time.Now().UTC().Format(time.RFC3339)
+	now := FilterNow()
 
 	records, err := app.FindRecordsByFilter(
 		"scheduled_sms",

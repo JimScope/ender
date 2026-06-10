@@ -55,6 +55,12 @@ var WebhookRetryBackoffs = []time.Duration{
 const (
 	SMSMaxRetries  = 3
 	SMSRetryCutoff = 24 * time.Hour // only retry messages younger than this
+
+	// SMSSendingStaleAfter marks "sending" messages as stuck: an agent claims
+	// them via /api/sms/pending and a healthy send completes in well under a
+	// minute, so anything still "sending" after this window belongs to an
+	// agent that died mid-batch and must be re-queued.
+	SMSSendingStaleAfter = 10 * time.Minute
 )
 
 var SMSRetryBackoffs = []time.Duration{

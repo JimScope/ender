@@ -88,13 +88,18 @@ func DispatchMessages(app core.App, messages []*core.Record) {
 
 		routine.FireAndForget(func() {
 			if !fcmBreaker.Allow() {
-				app.Logger().Warn("FCM circuit breaker open, skipping dispatch",
-					slog.String("token", fcmToken[:20]))
-				return // messages stay "assigned", retry cron picks them up
+				app.Logger().Warn("FCM circuit breaker open, failing dispatch",
+					slog.String("token", tokenPrefix(fcmToken)))
+				// Mark failed so the retry cron re-assigns and re-dispatches
+				// them once the breaker closes ("assigned" has no consumer).
+				for _, id := range messageIds {
+					markMessageFailed(app, id, "FCM circuit breaker open")
+				}
+				return
 			}
 			if err := sendFCMTickle(fcmToken, count); err != nil {
 				fcmBreaker.RecordFailure()
-				app.Logger().Error("FCM send failed", slog.String("token", fcmToken[:20]), slog.Any("error", err))
+				app.Logger().Error("FCM send failed", slog.String("token", tokenPrefix(fcmToken)), slog.Any("error", err))
 				for _, id := range messageIds {
 					markMessageFailed(app, id, err.Error())
 				}
@@ -133,6 +138,12 @@ func sendFCMTickle(token string, count int) error {
 
 	log.Printf("FCM tickle sent: %s", resp)
 	return nil
+}
+
+// tokenPrefix returns the first 20 chars of a token for log identification,
+// without panicking on short tokens.
+func tokenPrefix(token string) string {
+	return token[:min(len(token), 20)]
 }
 
 func markMessageFailed(app core.App, messageId, errMsg string) {

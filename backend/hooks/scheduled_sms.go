@@ -86,6 +86,11 @@ func validateScheduledAt(record *core.Record) error {
 func computeNextRunAt(record *core.Record) error {
 	scheduleType := record.GetString("schedule_type")
 	if scheduleType == "one_time" {
+		// The executor clears next_run_at when completing a one_time run;
+		// recomputing here would resurrect a past next_run_at on that same save.
+		if record.GetString("status") == "completed" {
+			return nil
+		}
 		record.Set("next_run_at", record.GetString("scheduled_at"))
 	} else if scheduleType == "recurring" {
 		cronExpr := record.GetString("cron_expression")

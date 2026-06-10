@@ -161,36 +161,57 @@ func ProcessPaymentCredit(app core.App, userId, txHash string, amount float64) (
 }
 
 // creditAndActivate is the shared logic for all deposit/payment flows:
-// credit balance, then auto-activate a pending subscription if sufficient.
+// credit balance, then auto-activate a pending/past_due subscription if sufficient.
 func creditAndActivate(app core.App, userId, txHash string, amount float64, asset string) (map[string]any, error) {
-	// Idempotency: skip if this transaction was already processed
-	if txHash != "" {
-		existing, _ := FindPaymentByTransactionID(app, txHash)
-		if existing != nil {
-			return map[string]any{
-				"status":  "already_processed",
-				"tx_hash": txHash,
-			}, nil
+	var newBalance float64
+	alreadyProcessed := false
+
+	// Idempotency check + credit + payment marker share one transaction so
+	// concurrent deliveries of the same provider webhook cannot double-credit.
+	// PocketBase serializes write transactions, so the second delivery only
+	// starts after the first commits and sees its payment marker.
+	err := app.RunInTransaction(func(txApp core.App) error {
+		if txHash != "" {
+			existing, _ := FindPaymentByTransactionID(txApp, txHash)
+			if existing != nil {
+				alreadyProcessed = true
+				return nil
+			}
 		}
-	}
 
-	newBalance, err := CreditBalance(app, userId, amount)
-	if err != nil {
-		return nil, err
-	}
+		var creditErr error
+		newBalance, creditErr = CreditBalance(txApp, userId, amount)
+		if creditErr != nil {
+			return creditErr
+		}
 
-	// Record the credit as a payment for idempotency tracking
-	if txHash != "" {
-		collection, _ := app.FindCollectionByNameOrId("payments")
-		if collection != nil {
+		// Record the credit as a payment for idempotency tracking
+		if txHash != "" {
+			collection, err := txApp.FindCollectionByNameOrId("payments")
+			if err != nil {
+				return fmt.Errorf("payments collection not found: %w", err)
+			}
 			record := core.NewRecord(collection)
 			record.Set("amount", amount)
 			record.Set("currency", asset)
 			record.Set("provider", "")
 			record.Set("provider_transaction_id", txHash)
 			record.Set("status", "completed")
-			_ = app.Save(record)
+			if err := txApp.Save(record); err != nil {
+				return fmt.Errorf("failed to record payment marker: %w", err)
+			}
 		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	if alreadyProcessed {
+		return map[string]any{
+			"status":  "already_processed",
+			"tx_hash": txHash,
+		}, nil
 	}
 
 	result := map[string]any{
@@ -202,9 +223,13 @@ func creditAndActivate(app core.App, userId, txHash string, amount float64, asse
 		"new_balance": newBalance,
 	}
 
-	// Auto-activate pending subscription if balance is now sufficient
+	// Auto-activate pending or past_due subscription if balance is now sufficient
 	sub, err := findSubscriptionByUser(app, userId)
-	if err == nil && sub != nil && sub.GetString("status") == "pending" && sub.GetString("payment_method") == "balance" {
+	subStatus := ""
+	if sub != nil {
+		subStatus = sub.GetString("status")
+	}
+	if err == nil && sub != nil && (subStatus == "pending" || subStatus == "past_due") && sub.GetString("payment_method") == "balance" {
 		plan, planErr := app.FindRecordById("user_plans", sub.GetString("plan"))
 		if planErr == nil {
 			planAmount, periodDays := calculateBilling(plan, sub.GetString("billing_cycle"))
@@ -279,7 +304,10 @@ func ProcessBalanceRenewal(app core.App, subscriptionId string) error {
 
 	if sub.GetBool("cancel_at_period_end") {
 		sub.Set("status", "canceled")
-		return app.Save(sub)
+		if err := app.Save(sub); err != nil {
+			return err
+		}
+		return downgradeToFreePlan(app, sub.GetString("user"))
 	}
 
 	userId := sub.GetString("user")

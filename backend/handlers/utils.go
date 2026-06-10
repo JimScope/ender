@@ -11,6 +11,27 @@ import (
 	"github.com/pocketbase/pocketbase/core"
 )
 
+// paymentSecretKeys are system_config keys holding payment provider
+// credentials. They are stored AES-GCM encrypted and never returned by the
+// API (GET strips them; admins use env_hints to know whether they are set).
+var paymentSecretKeys = map[string]bool{
+	"trondealer_api_key":        true,
+	"trondealer_webhook_secret": true,
+	"qvapay_app_secret":         true,
+	"stripe_secret_key":         true,
+	"stripe_webhook_secret":     true,
+}
+
+// encryptIfSecret encrypts the value when the key is a payment secret.
+// Returns an error if encryption is unavailable (missing encryption key) —
+// secrets must never be persisted in plaintext.
+func encryptIfSecret(key, value string) (string, error) {
+	if !paymentSecretKeys[key] || value == "" {
+		return value, nil
+	}
+	return services.EncryptSecret(value)
+}
+
 // RegisterUtilRoutes registers utility routes.
 // Note: /api/health is provided by PocketBase out of the box.
 func RegisterUtilRoutes(se *core.ServeEvent) {
@@ -59,15 +80,8 @@ func RegisterUtilRoutes(se *core.ServeEvent) {
 		}
 
 		// Strip secret values — never return them, admin uses env_hints to know if set
-		secretKeys := map[string]bool{
-			"trondealer_api_key":        true,
-			"trondealer_webhook_secret": true,
-			"qvapay_app_secret":         true,
-			"stripe_secret_key":         true,
-			"stripe_webhook_secret":     true,
-		}
 		for _, r := range records {
-			if secretKeys[r.GetString("key")] {
+			if paymentSecretKeys[r.GetString("key")] {
 				r.Set("value", "")
 			}
 		}
@@ -91,15 +105,15 @@ func RegisterUtilRoutes(se *core.ServeEvent) {
 			return apis.NewApiError(http.StatusInternalServerError, "system_config collection not found", nil)
 		}
 
-		secretKeys := map[string]bool{
-			"trondealer_api_key": true, "trondealer_webhook_secret": true,
-			"qvapay_app_secret": true, "stripe_secret_key": true, "stripe_webhook_secret": true,
-		}
-
 		for key, value := range body {
 			// Don't overwrite secrets with empty values (GET strips them)
-			if value == "" && secretKeys[key] {
+			if value == "" && paymentSecretKeys[key] {
 				continue
+			}
+			value, err := encryptIfSecret(key, value)
+			if err != nil {
+				return apis.NewApiError(http.StatusInternalServerError,
+					"Cannot store secret: WEBHOOK_ENCRYPTION_KEY is not configured", nil)
 			}
 			record, _ := e.App.FindFirstRecordByFilter("system_config", "key = {:key}", map[string]any{"key": key})
 			if record != nil {
@@ -131,12 +145,18 @@ func RegisterUtilRoutes(se *core.ServeEvent) {
 			return apis.NewBadRequestError("Invalid request body", nil)
 		}
 
+		value, err := encryptIfSecret(key, body.Value)
+		if err != nil {
+			return apis.NewApiError(http.StatusInternalServerError,
+				"Cannot store secret: WEBHOOK_ENCRYPTION_KEY is not configured", nil)
+		}
+
 		// Try to find existing record by key
 		record, _ := e.App.FindFirstRecordByFilter("system_config", "key = {:key}", map[string]any{"key": key})
 
 		if record != nil {
 			// Update existing
-			record.Set("value", body.Value)
+			record.Set("value", value)
 			if err := e.App.Save(record); err != nil {
 				return apis.NewApiError(http.StatusInternalServerError, "Failed to update config", nil)
 			}
@@ -148,10 +168,15 @@ func RegisterUtilRoutes(se *core.ServeEvent) {
 			}
 			record = core.NewRecord(collection)
 			record.Set("key", key)
-			record.Set("value", body.Value)
+			record.Set("value", value)
 			if err := e.App.Save(record); err != nil {
 				return apis.NewApiError(http.StatusInternalServerError, "Failed to create config", nil)
 			}
+		}
+
+		// Never echo secret material back (matches GET behavior)
+		if paymentSecretKeys[key] {
+			record.Set("value", "")
 		}
 
 		return e.JSON(http.StatusOK, record)
