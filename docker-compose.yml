@@ -29,5 +29,24 @@ services:
     profiles:
       - dev
 
+  modem-agent:
+    build: ./modem-agent
+    profiles:
+      - modem
+    volumes:
+      # Copy modems.example.yaml to modems.yaml and fill in your device API keys
+      - ./modem-agent/modems.yaml:/app/modems.yaml:ro
+    environment:
+      - VENDEL_URL=http://app:8090
+      # Plain http is acceptable here: traffic never leaves the docker bridge
+      - VENDEL_ALLOW_INSECURE_HTTP=1
+    devices:
+      # Map your modem's serial ports (adjust to match your hardware)
+      - /dev/ttyUSB0:/dev/ttyUSB0
+      - /dev/ttyUSB1:/dev/ttyUSB1
+    depends_on:
+      - app
+    restart: unless-stopped
+
 volumes:
   pb_data:
