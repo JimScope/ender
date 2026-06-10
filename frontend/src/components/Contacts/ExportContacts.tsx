@@ -15,13 +15,33 @@ import type { Contact, ContactGroup } from "@/types/collections"
 
 interface ExportContactsProps {
   groups: ContactGroup[]
+  search?: string
+  groupFilter?: string
 }
 
-// The list view only downloads the first page of contacts; exports must
-// cover every record, so they pull the full list on demand.
-async function fetchAllContacts(): Promise<Contact[]> {
+// Builds the same filter the table applies so an export honours the active
+// search / group selection instead of always dumping the whole address book.
+// An empty string exports everything.
+function buildContactFilter(search?: string, groupFilter?: string): string {
+  const parts: string[] = []
+  const trimmed = search?.trim()
+  if (trimmed) {
+    parts.push(
+      pb.filter("(name ~ {:s} || phone_number ~ {:s})", { s: trimmed }),
+    )
+  }
+  if (groupFilter) {
+    parts.push(pb.filter("groups.id ?= {:g}", { g: groupFilter }))
+  }
+  return parts.join(" && ")
+}
+
+// The list view only downloads the first page of contacts; exports pull the
+// full list on demand, scoped to the active filter.
+async function fetchAllContacts(filter: string): Promise<Contact[]> {
   const items = await pb.collection("contacts").getFullList({
     sort: "-created",
+    ...(filter ? { filter } : {}),
   })
   return items as unknown as Contact[]
 }
@@ -84,7 +104,11 @@ function exportVCard(contacts: Contact[]) {
   downloadFile(vcf, "contacts.vcf", "text/vcard;charset=utf-8")
 }
 
-const ExportContacts = ({ groups }: ExportContactsProps) => {
+const ExportContacts = ({
+  groups,
+  search,
+  groupFilter,
+}: ExportContactsProps) => {
   const { t } = useTranslation()
   const { showErrorToast } = useCustomToast()
   const [isExporting, setIsExporting] = useState(false)
@@ -92,7 +116,9 @@ const ExportContacts = ({ groups }: ExportContactsProps) => {
   const handleExport = async (format: "csv" | "vcard") => {
     setIsExporting(true)
     try {
-      const contacts = await fetchAllContacts()
+      const contacts = await fetchAllContacts(
+        buildContactFilter(search, groupFilter),
+      )
       if (format === "csv") {
         exportCSV(contacts, groups)
       } else {
