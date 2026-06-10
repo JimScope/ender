@@ -317,14 +317,11 @@ func TestAEUMEvent_SubscriptionConfirmation(t *testing.T) {
 	env := newAEUMTestEnv(t)
 	defer env.Close()
 
-	// Stand up a fake SubscribeURL endpoint so ConfirmSNSSubscription
-	// returns success.
-	subscribeServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer subscribeServer.Close()
-
-	body := env.signedSubscriptionConfirmation(t, subscribeServer.URL)
+	// ConfirmSNSSubscription now refuses non-AWS-SNS hosts, so the SubscribeURL
+	// must resolve to the same TLS cert server (whose host the env installs into
+	// awsSNSHostRe and whose client trusts its cert). It replies 200 on any
+	// path, which is all the confirmation GET checks.
+	body := env.signedSubscriptionConfirmation(t, env.certServer.URL+"/?Action=ConfirmSubscription&Token=tok-abc")
 
 	scenario := tests.ApiScenario{
 		Name:            "SubscriptionConfirmation confirms and returns 200",
