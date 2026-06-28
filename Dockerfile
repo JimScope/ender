@@ -6,6 +6,7 @@ COPY frontend/package.json frontend/bun.lock ./
 RUN ["bun", "install", "--frozen-lockfile"]
 
 COPY frontend/ ./
+ENV NODE_ENV=production
 RUN ["bun", "run", "build"]
 
 # Stage 2: Build Go binary
