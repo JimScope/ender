@@ -1,6 +1,6 @@
 services:
   restore:
-    image: litestream/litestream:0.5.11
+    image: litestream/litestream:0.5.15
     command: ["restore", "-if-replica-exists", "-config", "/app/litestream.yml", "/app/pb_data/data.db"]
     volumes:
       - pb_data:/app/pb_data
@@ -16,7 +16,7 @@ services:
         condition: service_completed_successfully
 
   litestream:
-    image: litestream/litestream:0.5.11
+    image: litestream/litestream:0.5.15
     command: ["replicate", "-config", "/app/litestream.yml"]
     volumes:
       - pb_data:/app/pb_data
