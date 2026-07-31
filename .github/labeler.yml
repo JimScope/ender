@@ -9,7 +9,6 @@ dependencies:
     - any-glob-to-any-file:
       - 'frontend/package.json'
       - 'frontend/bun.lock'
-      - 'frontend/package-lock.json'
       - 'backend/go.mod'
       - 'backend/go.sum'
       - 'modem-agent/go.mod'

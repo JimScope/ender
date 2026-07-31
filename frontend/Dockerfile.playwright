@@ -2,9 +2,11 @@ FROM mcr.microsoft.com/playwright:v1.61.1-noble
 
 WORKDIR /app
 
-COPY package*.json /app/
+# Install with bun against bun.lock so the E2E image resolves the same
+# dependency tree that the production build (Dockerfile) ships.
+COPY package.json bun.lock /app/
 
-RUN npm install
+RUN npm install -g bun && bun install --frozen-lockfile
 
 COPY ./ /app/
 

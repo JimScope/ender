@@ -40,14 +40,14 @@ go build ./...                        # Verify compilation
 ```bash
 cd frontend
 fnm use                       # Switch to Node 24 (or nvm use)
-npm install
-npm run dev                   # Dev server at localhost:5173
-npm run build                 # TypeScript + Vite build
-npm run lint                  # Biome check with auto-fix
+bun install                   # bun.lock is the only frontend lockfile
+bun run dev                   # Dev server at localhost:5173
+bun run build                 # TypeScript + Vite build
+bun run lint                  # Biome check with auto-fix
 
 # E2E tests (requires backend running)
-npx playwright test
-npx playwright test --ui      # Interactive UI mode
+bunx playwright test
+bunx playwright test --ui     # Interactive UI mode
 ```
 
 ## Architecture
