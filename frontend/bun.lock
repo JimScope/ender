@@ -34,7 +34,7 @@
         "i18next-browser-languagedetector": "^8.2.1",
         "lucide-react": "^1.17.0",
         "next-themes": "^0.4.6",
-        "pocketbase": "^0.26.9",
+        "pocketbase": "^0.27.0",
         "radix-ui": "^1.4.3",
         "react": "^19.2.6",
         "react-dom": "^19.2.6",
@@ -499,7 +499,7 @@
 
     "playwright-core": ["playwright-core@1.61.1", "", { "bin": { "playwright-core": "cli.js" } }, "sha512-h7Qlt6m4REp25qvIdvbDtVmD4LqVXfpRxhORv9L0jzETM05p4fuPJ3dKyuSXQxDSbXnmS79HAgi9589lGSpLkg=="],
 
-    "pocketbase": ["pocketbase@0.26.9", "", {}, "sha512-Tiv1/hNuUzRdvT0d8hF03dfzuefQ1WdSRp1A1q3wzFC/WYhQcbU/Qlaubl/3ZDo6xvFXBS8JAgBS/L+ms7nkVQ=="],
+    "pocketbase": ["pocketbase@0.27.0", "", {}, "sha512-K5N6d93UP/BNMbMnlZ6BUfy9VPCIvLyqhJFOsNI8OsZwzvKWEAfyD36boi5K4ECIOl5HMlo0TzuaeGdKpMwizQ=="],
 
     "postcss": ["postcss@8.5.15", "", { "dependencies": { "nanoid": "^3.3.12", "picocolors": "^1.1.1", "source-map-js": "^1.2.1" } }, "sha512-FfR8sjd4em2T6fb3I2MwAJU7HWVMr9zba+enmQeeWFfCbm+UOC/0X4DS8XtpUTMwWMGbjKYP7xjfNekzyGmB3A=="],
 
